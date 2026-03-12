@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="pdoc {{ __version__ }}"/>
+    <title>{% block title %}{% endblock %}</title>
+    {% block favicon %}
+        {% if favicon %}
+            <link rel="icon" href="{{ favicon }}"/>
+        {% endif %}
+    {% endblock %}
+    {% block head %}
+        <script>
+            (() => {
+                const storageKey = "oak-docs-theme";
+                const windowNamePrefix = "oak-docs-theme:";
+                const validThemes = new Set(["dark", "light"]);
+                const themeFromUrl = new URL(window.location.href).searchParams.get("theme");
+                let storedTheme = null;
+
+                if (validThemes.has(themeFromUrl)) {
+                    storedTheme = themeFromUrl;
+                }
+
+                if (!storedTheme) try {
+                    const localTheme = window.localStorage.getItem(storageKey);
+                    if (validThemes.has(localTheme)) {
+                        storedTheme = localTheme;
+                    }
+                } catch {}
+
+                if (!storedTheme && window.name.startsWith(windowNamePrefix)) {
+                    const windowTheme = window.name.slice(windowNamePrefix.length);
+                    if (validThemes.has(windowTheme)) {
+                        storedTheme = windowTheme;
+                    }
+                }
+
+                const preferredDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                const theme = storedTheme || (preferredDark ? "dark" : "light");
+                document.documentElement.dataset.theme = theme;
+                document.documentElement.classList.toggle("theme-dark", theme === "dark");
+                window.__oakDocsTheme = {
+                    storageKey,
+                    windowNamePrefix,
+                    validThemes,
+                };
+            })();
+        </script>
+    {% endblock %}
+    {% filter minify_css | indent %}
+        {% block style %}
+            <style>{% include "resources/bootstrap-reboot.min.css" %}</style>
+            <style>/*! syntax-highlighting.css */{% include "syntax-highlighting.css" %}</style>
+            {% block style_pdoc %}
+                {% block style_theme %}<style>/*! theme.css */{% include "theme.css" %}</style>{% endblock %}
+                {% block style_layout %}<style>/*! layout.css */{% include "layout.css" %}</style>{% endblock %}
+                {% block style_content %}<style>/*! content.css */{% include "content.css" %}</style>{% endblock %}
+                <style>/*! custom.css */{% include "custom.css" %}</style>
+            {% endblock %}
+        {% endblock %}
+    {% endfilter %}
+    {% if math %}{% include "math.html.jinja2" %}{% endif %}
+</head>
+<body>
+{% block body %}
+    <div class="docs-controls">
+        <button id="theme-toggle" class="pdoc-button theme-toggle" type="button" aria-label="Toggle color theme">
+            <span class="theme-toggle-switch" aria-hidden="true">
+                <span class="theme-toggle-thumb"></span>
+            </span>
+            <span class="theme-toggle-label">Dark mode</span>
+        </button>
+    </div>
+    <nav class="pdoc">
+        <label id="navtoggle" for="togglestate" class="pdoc-button">{% include 'resources/navtoggle.svg' %}</label>
+        <input id="togglestate" type="checkbox" aria-hidden="true" tabindex="-1">
+        <div>{% block nav %}{% endblock %}</div>
+    </nav>
+    {% block content %}{% endblock %}
+    <script>
+        (() => {
+            const { storageKey, windowNamePrefix, validThemes } = window.__oakDocsTheme || {
+                storageKey: "oak-docs-theme",
+                windowNamePrefix: "oak-docs-theme:",
+                validThemes: new Set(["dark", "light"]),
+            };
+            const root = document.documentElement;
+            const button = document.getElementById("theme-toggle");
+
+            function applyTheme(theme) {
+                root.dataset.theme = theme;
+                root.classList.toggle("theme-dark", theme === "dark");
+                if (button) {
+                    const nextLabel = theme === "dark" ? "Light mode" : "Dark mode";
+                    button.setAttribute("aria-pressed", theme === "dark" ? "true" : "false");
+                    const label = button.querySelector(".theme-toggle-label");
+                    if (label) label.textContent = nextLabel;
+                }
+            }
+
+            function persistTheme(theme) {
+                try {
+                    window.localStorage.setItem(storageKey, theme);
+                } catch {}
+                window.name = `${windowNamePrefix}${theme}`;
+            }
+
+            function decorateInternalLink(link, theme) {
+                if (!link.href) return;
+
+                const destination = new URL(link.href, window.location.href);
+                if (destination.origin !== window.location.origin) return;
+                if (destination.pathname === window.location.pathname) return;
+
+                destination.searchParams.set("theme", theme);
+                link.href = destination.toString();
+            }
+
+            applyTheme(root.dataset.theme || "light");
+            persistTheme(root.dataset.theme || "light");
+
+            for (const link of document.querySelectorAll('a[href]')) {
+                decorateInternalLink(link, root.dataset.theme || "light");
+            }
+
+            if (button) {
+                button.addEventListener("click", () => {
+                    const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
+                    persistTheme(nextTheme);
+                    applyTheme(nextTheme);
+
+                    for (const link of document.querySelectorAll('a[href]')) {
+                        decorateInternalLink(link, nextTheme);
+                    }
+                });
+            }
+
+            document.addEventListener("click", (event) => {
+                const link = event.target instanceof Element ? event.target.closest("a[href]") : null;
+                if (!link) return;
+
+                const activeTheme = root.dataset.theme || "light";
+                if (!validThemes.has(activeTheme)) return;
+                decorateInternalLink(link, activeTheme);
+            });
+        })();
+    </script>
+{% endblock body %}
+</body>
+</html>

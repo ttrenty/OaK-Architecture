@@ -1,3 +1,9 @@
+# Project Specific
+ressources/
+node_modules/
+docs/api/
+docs/img/*
+!docs/img/.gitkeep
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -205,3 +211,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

@@ -1,0 +1,28 @@
+{% extends "frame.html.jinja2" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block nav %}
+    <h2>Guides</h2>
+    <ul>
+        {% for page in guide_pages %}
+            <li>
+                <a href="{{ page.output }}">{{ page.title }}</a>
+            </li>
+        {% endfor %}
+    </ul>
+    <h2>Reference</h2>
+    <ul>
+        <li><a href="oak_architecture.html">API Reference</a></li>
+    </ul>
+{% endblock %}
+
+{% block content %}
+    <main class="pdoc">
+        <section class="module-info">
+            <div class="docstring">
+                {{ page_markdown | to_html | safe }}
+            </div>
+        </section>
+    </main>
+{% endblock %}
