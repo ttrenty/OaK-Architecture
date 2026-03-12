@@ -1,0 +1,51 @@
+@startuml
+title One OaK time step
+
+actor World
+participant Perception
+participant "Feature Constructor" as FeatureConstructor
+participant "Feature Ranker" as FeatureRanker
+participant "Subtask Generator" as SubtaskGenerator
+participant "Value Function Bank" as ValueFunctionBank
+participant "Option Learner" as OptionLearner
+participant "Option Model Learner" as OptionModelLearner
+participant "Transition Model" as TransitionModel
+participant Planner
+participant "Reactive Policy" as ReactivePolicy
+participant "Utility Assessor" as UtilityAssessor
+participant Curator
+
+== Foreground ==
+World -> Perception : obs_t, r_t, a_(t-1)
+Perception -> Perception : update subjective state s_t
+
+opt previous transition exists
+  Perception -> ValueFunctionBank : update GVFs
+  Perception -> OptionLearner : update option learning
+  Perception -> OptionModelLearner : update option models
+  Perception -> TransitionModel : update action model
+end
+
+Perception -> FeatureConstructor : propose candidate features
+FeatureConstructor -> FeatureRanker : current and candidate features
+FeatureRanker -> SubtaskGenerator : top-ranked feature ids
+SubtaskGenerator -> OptionLearner : new reward-respecting subtasks
+
+Perception -> ReactivePolicy : state s_t
+ReactivePolicy -> World : primitive action or action from active option
+
+== Background ==
+Planner -> TransitionModel : budgeted planning queries
+Planner -> ValueFunctionBank : backup targets
+Planner -> ReactivePolicy : policy improvement signal
+
+== Utility and curation ==
+FeatureRanker -> UtilityAssessor : feature usage
+OptionLearner -> UtilityAssessor : option usage
+TransitionModel -> UtilityAssessor : planning utility
+Planner -> UtilityAssessor : search statistics
+UtilityAssessor -> Curator : utility scores
+Curator -> OptionLearner : prune low-utility subtasks
+Curator -> TransitionModel : prune low-utility option models
+
+@enduml

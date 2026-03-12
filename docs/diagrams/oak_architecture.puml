@@ -1,0 +1,71 @@
+@startuml
+title OaK architecture reference view
+
+skinparam componentStyle rectangle
+skinparam packageStyle rectangle
+
+actor World as W
+
+package "Base agent" {
+  [Perception] as Perception
+  [Reactive Policy] as ReactivePolicy
+  [Value Function Bank] as ValueFunctionBank
+  [Transition Model] as TransitionModel
+  [Planner] as Planner
+  [Meta Step-Size Learner] as MetaStepSizeLearner
+}
+
+package "FC-STOMP and curation" {
+  [Feature Bank] as FeatureBank
+  [Feature Constructor] as FeatureConstructor
+  [Feature Ranker] as FeatureRanker
+  [Subtask Generator] as SubtaskGenerator
+  [Option Learner] as OptionLearner
+  [Option Library] as OptionLibrary
+  [Option Model Learner] as OptionModelLearner
+  [Utility Assessor] as UtilityAssessor
+  [Curator] as Curator
+  [Option Keyboard\n(optional)] as OptionKeyboard
+}
+
+W --> Perception : observation, reward, last action
+Perception --> ReactivePolicy : subjective state
+Perception --> ValueFunctionBank : subjective state
+Perception --> TransitionModel : subjective state
+ReactivePolicy --> W : primitive action
+
+Perception --> FeatureBank : feature activity
+FeatureConstructor --> FeatureBank : candidate features
+FeatureBank --> FeatureRanker : current features
+FeatureRanker --> SubtaskGenerator : ranked feature ids
+SubtaskGenerator --> OptionLearner : reward-respecting subtasks
+OptionLearner --> OptionLibrary : learned options
+OptionLearner --> OptionModelLearner : execution traces
+OptionModelLearner --> TransitionModel : option models
+
+ValueFunctionBank --> Planner : value estimates
+TransitionModel --> Planner : action and option predictions
+Planner --> ReactivePolicy : policy targets
+Planner --> ValueFunctionBank : value targets
+
+MetaStepSizeLearner --> Perception : per-weight step sizes
+MetaStepSizeLearner --> ReactivePolicy : per-weight step sizes
+MetaStepSizeLearner --> ValueFunctionBank : per-weight step sizes
+MetaStepSizeLearner --> TransitionModel : per-weight step sizes
+
+FeatureBank --> UtilityAssessor : feature usage
+OptionLibrary --> UtilityAssessor : option usage
+TransitionModel --> UtilityAssessor : planning utility
+Planner --> UtilityAssessor : search statistics
+UtilityAssessor --> Curator : utility scores
+Curator --> FeatureBank : prune / replace
+Curator --> OptionLearner : drop subtasks
+Curator --> OptionLibrary : prune options
+Curator --> TransitionModel : prune option models
+Curator --> ValueFunctionBank : prune GVFs
+
+FeatureBank --> OptionKeyboard : feature keys
+OptionLibrary --> OptionKeyboard : basis options
+OptionKeyboard --> ReactivePolicy : composed option descriptor
+
+@enduml

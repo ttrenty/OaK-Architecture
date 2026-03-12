@@ -1,0 +1,39 @@
+flowchart LR
+  World -->|observation, reward| Perception
+  Perception -->|subjective state| ReactivePolicy
+  Perception -->|subjective state| ValueFunctionBank
+  Perception -->|subjective state| TransitionModel
+  ReactivePolicy -->|primitive action| World
+
+  Perception -->|feature activity| FeatureBank
+  FeatureConstructor -->|candidate features| FeatureBank
+  FeatureBank -->|current features| FeatureRanker
+  FeatureRanker -->|ranked feature ids| SubtaskGenerator
+  SubtaskGenerator -->|reward-respecting subtasks| OptionLearner
+  OptionLearner -->|learned options| OptionLibrary
+  OptionLearner -->|execution traces| OptionModelLearner
+  OptionModelLearner -->|option models| TransitionModel
+
+  ValueFunctionBank -->|value estimates| Planner
+  TransitionModel -->|action and option predictions| Planner
+  Planner -->|policy targets| ReactivePolicy
+  Planner -->|value targets| ValueFunctionBank
+
+  MetaStepSizeLearner -.->|per-weight step sizes| Perception
+  MetaStepSizeLearner -.->|per-weight step sizes| ReactivePolicy
+  MetaStepSizeLearner -.->|per-weight step sizes| ValueFunctionBank
+  MetaStepSizeLearner -.->|per-weight step sizes| TransitionModel
+
+  FeatureBank -->|feature usage| UtilityAssessor
+  OptionLibrary -->|option usage| UtilityAssessor
+  TransitionModel -->|planning utility| UtilityAssessor
+  Planner -->|search statistics| UtilityAssessor
+  UtilityAssessor -->|utility scores| Curator
+  Curator -->|prune or replace| FeatureBank
+  Curator -->|prune or replace| OptionLearner
+  Curator -->|prune or replace| OptionLibrary
+  Curator -->|prune or replace| TransitionModel
+
+  FeatureBank -.->|feature keys| OptionKeyboard
+  OptionLibrary -.->|basis options| OptionKeyboard
+  OptionKeyboard -.->|composed option descriptor| ReactivePolicy

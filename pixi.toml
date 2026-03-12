@@ -1,0 +1,18 @@
+[workspace]
+authors = []
+channels = ["conda-forge"]
+name = "OaK-Architecture"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+render_mermaid = "mkdir -p docs/img && npx -y @mermaid-js/mermaid-cli -p docs/diagrams/puppeteer-config.json -i docs/diagrams/oak_architecture_marmaid.mmd -o docs/img/oak_architecture_marmaid.svg"
+render_plantuml = "JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/*.svg docs/img/"
+render_diagrams = { depends-on = ["render_mermaid", "render_plantuml"] }
+
+[dependencies]
+python = ">=3.14.3,<3.15"
+openjdk = ">=25.0.2,<26"
+graphviz = ">=14.1.2,<15"
+nodejs = ">=25.7.0,<25.8"
+plantuml = ">=1.2026.2,<2"
