@@ -1,6 +1,24 @@
 from __future__ import annotations
 
-"""Shared data structures used by the OaK interface package."""
+"""Shared data structures used by the OaK interface package.
+
+This module defines the vocabulary passed between the main OaK components.
+
+The most important objects are:
+
+- `TimeStep`
+  One emission from the world or environment.
+- `Transition`
+  The agent-centric view of a before/after update, used by learning
+  components.
+- `PlanningUpdate`
+  The information returned by planning and consumed by the reactive policy.
+- `AgentStepResult`
+  The externally visible result of one `OaKAgent.step(...)` call.
+
+In practice, most projects start by making `StateT` concrete, then choosing a
+small `ObsT`, `ActT`, and `InfoT` that match their environment wrapper.
+"""
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -44,7 +62,12 @@ class ComponentKind(str, Enum):
 
 @dataclass(slots=True, frozen=True)
 class TimeStep(Generic[ObsT, InfoT]):
-    """One environment emission seen by the agent."""
+    """One environment emission seen by the agent.
+
+    `TimeStep` is the object passed into `OaKAgent.step(...)`. It contains the
+    raw observation, scalar reward, episode-control flags, and optional
+    environment metadata.
+    """
 
     observation: ObsT
     reward: float
@@ -55,7 +78,12 @@ class TimeStep(Generic[ObsT, InfoT]):
 
 @dataclass(slots=True, frozen=True)
 class Transition(Generic[ObsT, ActT, StateT, InfoT]):
-    """One state transition in agent terms."""
+    """One state transition in agent terms.
+
+    `Transition` is constructed by the agent after two consecutive time steps.
+    Learners use it instead of the raw world stream so they can access both the
+    previous and next state representations.
+    """
 
     state: StateT
     action: ActT
@@ -198,7 +226,12 @@ class CurationDecision:
 
 @dataclass(slots=True, frozen=True)
 class AgentStepResult(Generic[ActT, StateT]):
-    """Observable result of one OaK agent step."""
+    """Observable result of one OaK agent step.
+
+    This is the compact object a caller receives after stepping the agent. It
+    includes the primitive action actually executed, the current state, and any
+    structures or planning signals created during that step.
+    """
 
     action: ActT
     state: StateT

@@ -1,5 +1,20 @@
 from __future__ import annotations
-"""Abstract interfaces for the OaK architecture."""
+
+"""Abstract interfaces for the OaK architecture.
+
+How to read this module:
+
+1. Start with `World`, `Perception`, `ReactivePolicy`, `ValueFunction`, and
+   `TransitionModel`. These are the main runtime pieces.
+2. Then read the feature, subtask, option, and planning interfaces. These add
+   representational growth and temporal abstraction.
+3. Finish with `UtilityAssessor`, `Curator`, and `MetaStepSizeLearner`. These
+   capture the self-maintenance and adaptation machinery around the core agent.
+
+The interfaces are intentionally split so a project can begin with a small
+continual-learning agent and only add planning, options, or curation once the
+core loop is working.
+"""
 
 from abc import ABC, abstractmethod
 from typing import (
@@ -40,7 +55,12 @@ from .types import (
 
 @runtime_checkable
 class World(Protocol[ObsT, ActT, InfoT]):
-    """Minimal environment protocol used by the agent."""
+    """Minimal environment protocol used by the agent.
+
+    A `World` may wrap a simulator, a benchmark environment, or a custom
+    continual data source. The protocol is intentionally small so the package
+    does not depend on a specific environment library.
+    """
 
     def reset(self) -> TimeStep[ObsT, InfoT]: ...
 
@@ -48,7 +68,12 @@ class World(Protocol[ObsT, ActT, InfoT]):
 
 
 class Perception(ABC, Generic[ObsT, ActT, StateT]):
-    """Builds and updates the state seen by the other AoK blocks."""
+    """Builds and updates the state seen by the other OaK blocks.
+
+    This is where an implementation decides what `State` means. For a simple
+    domain it may be a hand-built summary; for a more ambitious project it may
+    be the output of a learned encoder or recurrent memory system.
+    """
 
     @abstractmethod
     def reset(self) -> None:
@@ -152,7 +177,11 @@ class GVFLearner(ABC, Generic[StateT, ActT, InfoT]):
 
 
 class ValueFunction(ABC, Generic[StateT, ActT, InfoT]):
-    """Owns the main and auxiliary value learners."""
+    """Owns the main and auxiliary value learners.
+
+    A minimal implementation can expose a single predictive learner. A richer
+    implementation can maintain a bank of GVFs or related predictive signals.
+    """
 
     @abstractmethod
     def list_gvfs(self) -> Sequence[GVFLearner[StateT, ActT, InfoT]]:
@@ -267,7 +296,12 @@ class OptionModelLearner(ABC, Generic[StateT, ActT, InfoT]):
 
 
 class TransitionModel(ABC, Generic[StateT, ActT, InfoT]):
-    """Predictive world model for actions and options."""
+    """Predictive world model for actions and options.
+
+    This interface is the planner-facing model of what will happen next. It may
+    be learned, analytic, approximate, or hybrid, as long as it can answer the
+    bounded queries the planner needs.
+    """
 
     @abstractmethod
     def update(self, transition: Transition[Any, ActT, StateT, InfoT]) -> None:
@@ -301,7 +335,12 @@ class TransitionModel(ABC, Generic[StateT, ActT, InfoT]):
 
 
 class Planner(ABC, Generic[StateT, ActT, InfoT]):
-    """Produces planning updates from the transition model."""
+    """Produces planning updates from the transition model.
+
+    The planner does not directly act in the world. Instead it returns
+    improvement signals, targets, or search statistics that the reactive policy
+    and value learners can use.
+    """
 
     @abstractmethod
     def plan_step(
@@ -315,7 +354,12 @@ class Planner(ABC, Generic[StateT, ActT, InfoT]):
 
 
 class ReactivePolicy(ABC, Generic[StateT, ActT]):
-    """Chooses primitive actions or options from the current state."""
+    """Chooses primitive actions or options from the current state.
+
+    This is the foreground action-selection mechanism. It may be as small as a
+    hand-written policy for a toy domain or as complex as a learned policy head
+    over a rich state representation.
+    """
 
     @abstractmethod
     def decide(
@@ -362,7 +406,12 @@ class MetaStepSizeLearner(ABC):
 
 
 class UtilityAssessor(ABC):
-    """Aggregates usage signals into utility estimates."""
+    """Aggregates usage signals into utility estimates.
+
+    This is the accounting layer that estimates whether learned structures are
+    worth retaining. Feature generators, option learners, and model builders can
+    use these scores to decide what to keep improving.
+    """
 
     @abstractmethod
     def observe(self, usage: Sequence[UsageRecord]) -> None:
@@ -374,7 +423,12 @@ class UtilityAssessor(ABC):
 
 
 class Curator(ABC):
-    """Prunes low-utility architectural elements."""
+    """Prunes low-utility architectural elements.
+
+    The curator turns utility estimates into concrete keep/drop decisions. A
+    conservative curator can return empty decisions; a more aggressive one can
+    actively delete obsolete features, options, models, or predictions.
+    """
 
     @abstractmethod
     def curate(self, utilities: Sequence[UtilityRecord]) -> CurationDecision:

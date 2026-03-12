@@ -1,5 +1,22 @@
 from __future__ import annotations
-"""Reference agent wiring for the OaK architecture."""
+
+"""Reference agent wiring for the OaK architecture.
+
+`OaKAgent` is the runtime coordinator for the package. It does not implement
+the concrete learning algorithms itself; instead it defines the order in which
+the supplied components are called during one temporally uniform step.
+
+At a high level, one `step(...)` call does the following:
+
+1. Update `Perception` to obtain the current `State`.
+2. If a previous state/action exists, build a `Transition` and update the
+   learning subsystems.
+3. Grow or rank features and subtasks.
+4. Refresh options and option models.
+5. Ask the planner for a bounded planning update.
+6. Let the reactive policy choose the next primitive action or option.
+7. Record utility evidence and apply any curation decision.
+"""
 
 from dataclasses import dataclass
 from typing import Generic, Optional, Sequence
@@ -42,7 +59,12 @@ from .types import (
 
 @dataclass
 class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
-    """Coordinates one full OaK step across all registered components."""
+    """Coordinates one full OaK step across all registered components.
+
+    The agent is deliberately interface-first. It is best understood as a
+    wiring object: you provide the concrete implementations, and `OaKAgent`
+    ensures they are invoked in a consistent order.
+    """
 
     perception: Perception[ObsT, ActT, StateT]
     feature_bank: FeatureBank[StateT]
@@ -75,9 +97,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
         self.last_state = None
         self.last_observation = None
 
-    def step(
-        self, time_step: TimeStep[ObsT, InfoT]
-    ) -> AgentStepResult[ActT, StateT]:
+    def step(self, time_step: TimeStep[ObsT, InfoT]) -> AgentStepResult[ActT, StateT]:
         """Run one temporally uniform agent step."""
         state = self.perception.update(
             observation=time_step.observation,

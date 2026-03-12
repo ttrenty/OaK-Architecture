@@ -1,0 +1,33 @@
+{% extends "default/module.html.jinja2" %}
+
+{% block nav_index %}
+    {{ super() }}
+    {% set level = "../" * module.modulename.count(".") %}
+    {% if guide_pages %}
+        <h2>Guides</h2>
+        <ul>
+            {% for page in guide_pages %}
+                <li><a href="{{ level }}{{ page.output }}">{{ page.title }}</a></li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+    {% if module.modulename == "oak_architecture" %}
+        <h2>Architecture Guide</h2>
+        <ul>
+            <li><a href="#diagram-gallery">Diagram Gallery</a></li>
+            <li><a href="#how-the-diagrams-map-to-the-python-package">How The Diagrams Map To The Python Package</a></li>
+            <li><a href="#high-level-core-views">High-Level Core Views</a></li>
+            <li><a href="#detailed-architecture-views">Detailed Architecture Views</a></li>
+            <li><a href="#runtime-sequence">Runtime Sequence</a></li>
+        </ul>
+    {% endif %}
+{% endblock %}
+
+{% block module_info %}
+    {{ super() }}
+    {% if module.modulename == "oak_architecture" %}
+        <div class="docstring oak-module-extras">
+            {{ docs_markdown["oak_architecture_api_intro"] | to_html | safe }}
+        </div>
+    {% endif %}
+{% endblock %}

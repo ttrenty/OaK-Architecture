@@ -5,23 +5,44 @@ name = "OaK-Architecture"
 platforms = ["linux-64"]
 version = "0.1.0"
 
-[tasks]
-smoke_interface = { depends-on = ["run_minimal_oak"] }
-build_package = "python -m build --no-isolation"
-test = "python -m pip install -e . && python tst/run_minimal_oak.py"
-docs_api = "python tools/generate_api_docs.py"
-render_mermaid = "mkdir -p docs/img && npx -y @mermaid-js/mermaid-cli -p docs/diagrams/puppeteer-config.json -i docs/diagrams/oak_core_marmaid.mmd -o docs/img/oak_core_marmaid.svg && npx -y @mermaid-js/mermaid-cli -p docs/diagrams/puppeteer-config.json -i docs/diagrams/oak_architecture_marmaid.mmd -o docs/img/oak_architecture_marmaid.svg"
-render_plantuml = "JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/*.svg docs/img/"
-render_diagrams = { depends-on = ["render_mermaid", "render_plantuml"] }
-# remove the building artefacts
-clean = "rm -rf dist build *.egg-info"
+[tasks.build_package]
+cmd = "python -m build --no-isolation"
+inputs = ["pyproject.toml", "src/**/*.py"]
+outputs = ["dist/*"]
+
+[tasks.test]
+cmd = "python -m pip install -e . && python tst/run_minimal_oak.py"
+
+[tasks.render_plantuml]
+cmd = "mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
+inputs = ["docs/diagrams/**/*.puml"]
+outputs = [
+    "docs/api/img/oak_core.svg",
+    "docs/api/img/oak_architecture.svg",
+    "docs/api/img/oak_runtime_sequence.svg",
+]
+
+[tasks.render_diagrams]
+depends-on = ["render_plantuml"]
+
+[tasks.docs_api]
+cmd = "python docs/tools/generate_api_docs.py && echo 'API documentation available at docs/api/index.md'"
+depends-on = ["render_diagrams"]
+inputs = [
+    "src/**/*.py",
+    "docs/tools/generate_api_docs.py",
+    "docs/api/img/*.svg",
+]
+outputs = ["docs/api/**"]
+
+[tasks.clean]
+cmd = "rm -rf dist build *.egg-info docs/api"
 
 [dependencies]
 python = ">=3.14.3,<3.15"
 setuptools = ">=80,<81"
 openjdk = ">=25.0.2,<26"
 graphviz = ">=14.1.2,<15"
-nodejs = ">=25.7.0,<25.8"
 plantuml = ">=1.2026.2,<2"
 pip = ">=25.2,<26"
 

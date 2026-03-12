@@ -1,6 +1,28 @@
 from __future__ import annotations
 
-"""Bare-minimum runnable implementation used to smoke-test the interface."""
+"""Bare-minimum runnable implementation used to smoke-test the interface.
+
+This module answers a single question: can the current package interfaces be
+instantiated and run through a complete OaK step loop?
+
+The answer should remain "yes" even while the architecture is still under
+active development. That makes this module useful both as a tutorial and as a
+regression check for interface changes.
+
+What this module is:
+
+- a tiny integer world
+- a direct observation-to-state perception module
+- one simple feature, one subtask, and one trivial option
+- a no-op utility/curation setup
+
+What this module is not:
+
+- a trained agent
+- a realistic planner
+- a serious option-learning system
+- a benchmark implementation
+"""
 
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TypeAlias
@@ -221,7 +243,9 @@ class MinimalGVFLearner(GVFLearner[MinimalState, Action, MinimalInfo]):
     def predict(self, state: MinimalState, action: Optional[Action] = None) -> float:
         return self._value
 
-    def update(self, transition: Transition[Any, Action, MinimalState, MinimalInfo]) -> float:
+    def update(
+        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+    ) -> float:
         self._value = transition.reward
         return 0.0
 
@@ -321,7 +345,9 @@ class MinimalOptionLearner(OptionLearner[MinimalState, Action, MinimalInfo]):
                 )
             )
 
-    def update(self, transition: Transition[Any, Action, MinimalState, MinimalInfo]) -> None:
+    def update(
+        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+    ) -> None:
         return None
 
     def export_options(self) -> Sequence[Option[MinimalState, Action]]:
@@ -352,15 +378,15 @@ class MinimalOptionModel(OptionModel[MinimalState]):
         )
 
 
-class MinimalOptionModelLearner(
-    OptionModelLearner[MinimalState, Action, MinimalInfo]
-):
+class MinimalOptionModelLearner(OptionModelLearner[MinimalState, Action, MinimalInfo]):
     """Wraps the smoke-test options in smoke-test models."""
 
     def __init__(self, option_learner: MinimalOptionLearner) -> None:
         self._option_learner = option_learner
 
-    def update(self, transition: Transition[Any, Action, MinimalState, MinimalInfo]) -> None:
+    def update(
+        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+    ) -> None:
         return None
 
     def export_models(self) -> Sequence[OptionModel[MinimalState]]:
@@ -376,7 +402,9 @@ class MinimalTransitionModel(TransitionModel[MinimalState, Action, MinimalInfo])
     def __init__(self) -> None:
         self._option_models: dict[OptionId, OptionModel[MinimalState]] = {}
 
-    def update(self, transition: Transition[Any, Action, MinimalState, MinimalInfo]) -> None:
+    def update(
+        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+    ) -> None:
         return None
 
     def predict_action(

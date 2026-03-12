@@ -21,8 +21,7 @@ def main() -> None:
     first_step = trace[0]
     if first_step["created_subtasks"] != ["subtask:observation"]:
         raise RuntimeError(
-            "Unexpected first-step subtasks: "
-            f"{first_step['created_subtasks']!r}"
+            "Unexpected first-step subtasks: " f"{first_step['created_subtasks']!r}"
         )
 
     if any("action" not in step for step in trace):

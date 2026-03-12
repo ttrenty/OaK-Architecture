@@ -1,66 +1,98 @@
 @startuml
-title OaK detailed internal-process view
+title OaK detailed architecture view
 
+left to right direction
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
+skinparam linetype ortho
+skinparam ranksep 100
+skinparam nodesep 70
 
 actor World as W
 
-package "Core AoK agent (Sutton naming)" {
+package "Core runtime" {
   [Perception] as Perception
   [State] as State
   [Reactive Policy] as ReactivePolicy
-  [Value Function] as ValueFunction
+  [Value Function Bank] as ValueFunction
   [Transition Model] as TransitionModel
 }
 
-package "Detailed internal OaK mechanisms" {
-  [Feature Construction] as FeatureConstruction
-  [SubTask] as SubTask
-  [Option] as OptionLearner
-  [Option Model] as OptionModelLearner
-  [Planning] as Planning
+package "Representation and abstraction" {
+  [Feature Constructor] as FeatureConstructor
+  [Feature Bank] as FeatureBank
+  [Feature Ranker] as FeatureRanker
+  [Subtask Generator] as SubtaskGenerator
+  [Option Learner] as OptionLearner
+  [Option Library] as OptionLibrary
+  [Option Model Learner] as OptionModelLearner
+  [Option Keyboard\n(optional)] as OptionKeyboard
+}
+
+package "Planning and maintenance" {
+  [Planner] as Planner
   [Utility Assessor] as UtilityAssessor
   [Curator] as Curator
-  [Option Keyboard\n(optional)] as OptionKeyboard
   [Meta Step-Size Learner] as MetaStepSizeLearner
 }
 
-W --> Perception : observation, reward, last action
+W -[hidden]-> Perception
+Perception -[hidden]-> State
+State -[hidden]-> ReactivePolicy
+ReactivePolicy -[hidden]-> ValueFunction
+ValueFunction -[hidden]-> TransitionModel
+
+FeatureConstructor -[hidden]-> FeatureBank
+FeatureBank -[hidden]-> FeatureRanker
+FeatureRanker -[hidden]-> SubtaskGenerator
+SubtaskGenerator -[hidden]-> OptionLearner
+OptionLearner -[hidden]-> OptionLibrary
+OptionLibrary -[hidden]-> OptionModelLearner
+OptionModelLearner -[hidden]-> OptionKeyboard
+
+Planner -[hidden]-> UtilityAssessor
+UtilityAssessor -[hidden]-> Curator
+Curator -[hidden]-> MetaStepSizeLearner
+
+W --> Perception : observation,\nreward,\nlast action
 Perception --> State : produces
 State --> ReactivePolicy : current state
 State --> ValueFunction : current state
 State --> TransitionModel : current state
 ReactivePolicy --> W : action
-ValueFunction --> ReactivePolicy : learning signal
-TransitionModel --> ReactivePolicy : planning signal
-TransitionModel --> ValueFunction : simulated consequences
+ValueFunction ..> ReactivePolicy : learning signal
+TransitionModel ..> Planner : model queries
+TransitionModel ..> ValueFunction : simulated\nconsequences
+Planner ..> ValueFunction : value targets
+Planner ..> ReactivePolicy : policy targets
 
-State ..> FeatureConstruction : interesting features
-FeatureConstruction ..> SubTask : candidate features
-SubTask ..> OptionLearner : reward-respecting subtask
-OptionLearner ..> OptionModelLearner : learned option
-OptionModelLearner ..> TransitionModel : option model
-TransitionModel ..> Planning : predictive rollouts
-Planning ..> ValueFunction : value targets
-Planning ..> ReactivePolicy : policy targets
+State ..> FeatureBank : feature\nactivations
+State ..> FeatureConstructor : candidate\ncontext
+FeatureConstructor --> FeatureBank : candidate\nfeatures
+FeatureBank --> FeatureRanker : active\nfeatures
+FeatureRanker --> SubtaskGenerator : ranked\nfeature ids
+SubtaskGenerator --> OptionLearner : reward-respecting\nsubtasks
+OptionLearner --> OptionLibrary : learned\noptions
+OptionLearner --> OptionModelLearner : execution\ntraces
+OptionModelLearner --> TransitionModel : option\nmodels
+FeatureBank --> OptionKeyboard : feature\nkeys
+OptionLibrary --> OptionKeyboard : basis\noptions
+OptionKeyboard ..> ReactivePolicy : composed option\ndescriptor
 
-MetaStepSizeLearner --> Perception : per-weight step sizes
-MetaStepSizeLearner --> ReactivePolicy : per-weight step sizes
-MetaStepSizeLearner --> ValueFunction : per-weight step sizes
-MetaStepSizeLearner --> TransitionModel : per-weight step sizes
+FeatureBank --> UtilityAssessor : feature\nusage
+OptionLibrary --> UtilityAssessor : option\nusage
+TransitionModel --> UtilityAssessor : planning\nutility
+Planner --> UtilityAssessor : search\nstatistics
+UtilityAssessor --> Curator : utility\nscores
+Curator --> FeatureBank : prune or\nreplace
+Curator --> OptionLearner : drop\nsubtasks
+Curator --> OptionLibrary : prune\noptions
+Curator --> TransitionModel : prune option\nmodels
+Curator --> ValueFunction : prune\nGVFs
 
-FeatureConstruction --> UtilityAssessor : feature usage
-OptionLearner --> UtilityAssessor : option usage
-TransitionModel --> UtilityAssessor : planning utility
-Planning --> UtilityAssessor : search statistics
-UtilityAssessor --> Curator : utility scores
-Curator --> FeatureConstruction : prune / replace
-Curator --> OptionLearner : drop options
-Curator --> OptionModelLearner : drop option models
-
-FeatureConstruction --> OptionKeyboard : feature keys
-OptionLearner --> OptionKeyboard : basis options
-OptionKeyboard --> ReactivePolicy : composed option descriptor
+MetaStepSizeLearner ..> Perception : per-weight\nstep sizes
+MetaStepSizeLearner ..> ReactivePolicy : per-weight\nstep sizes
+MetaStepSizeLearner ..> ValueFunction : per-weight\nstep sizes
+MetaStepSizeLearner ..> TransitionModel : per-weight\nstep sizes
 
 @enduml
