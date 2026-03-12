@@ -12,11 +12,34 @@ The comparison was also checked against the local primary materials:
 
 ## Short verdict
 
-The ChatGPT report is the stronger architectural document. It stays closer to Sutton's public wording, separates the base agent from the OaK extensions, and makes the important pieces explicit: reward-respecting subtasks, GVFs, FC-STOMP, utility-based curation, per-weight meta step sizes, and the option keyboard as an extension rather than a mandatory runtime path.
+The ChatGPT report is the stronger architectural document. It stays closer to Sutton's public wording, separates the four-block agent view from the more detailed internal OaK processes, and makes the important pieces explicit: reward-respecting subtasks, GVFs, FC-STOMP, utility-based curation, per-weight meta step sizes, and the option keyboard as an optional OaK mechanism rather than a mandatory runtime path.
 
 The Gemini report is the stronger project-planning document. It does a better job connecting the architecture to the course proposal, prototype milestones, evaluation ideas, online normalization, and the practical need to choose shortcuts where the literature is still incomplete.
 
 The best solution is therefore not to pick one report wholesale. It is to keep the ChatGPT report as the architectural spine and fold in the Gemini report's implementation pragmatism where Sutton's sources leave room for engineering choice.
+
+## First design rule
+
+The four primary AoK blocks from Sutton should remain immediately visible:
+
+- `Perception`
+- `ReactivePolicy`
+- `ValueFunction`
+- `TransitionModel`
+
+Those blocks are organized around the agent's `State`, which is produced by `Perception` and consumed by the other three blocks.
+
+The rest of OaK should be shown as a more detailed internal view of OaK, not as something outside OaK:
+
+- feature construction
+- subtask posing
+- option learning
+- option-model learning
+- planning
+- utility assessment and curation
+- the optional option keyboard
+
+That is the representation now used in the diagrams and runnable example naming: a high-level four-block OaK view and a more detailed internal-process OaK view.
 
 ## Where the reports differ
 
@@ -25,7 +48,7 @@ The best solution is therefore not to pick one report wholesale. It is to keep t
 The ChatGPT report mostly treats OaK as a systems blueprint:
 
 - base agent: perception, reactive policy, value functions, transition model, planner
-- OaK extensions: feature construction, ranking, subtask generation, option learning, option modeling, utility assessment, curation
+- more detailed internal OaK processes: feature construction, ranking, subtask generation, option learning, option modeling, utility assessment, curation
 - explicit support for reward-respecting subtasks and GVF-based interfaces
 - explicit support for option keyboard and per-weight meta step sizes without forcing a concrete algorithm
 
@@ -80,13 +103,13 @@ Decision:
 
 ### Keep from the ChatGPT report
 
-- The base-agent decomposition: `Perception`, `ReactivePolicy`, `ValueFunctionBank`, `TransitionModel`, `Planner`.
+- The base-agent decomposition: `Perception`, `ReactivePolicy`, `ValueFunction`, and `TransitionModel`, all centered on `State`.
 - The FC-STOMP pipeline as first-class structure instead of an informal comment.
 - Reward-respecting subtasks represented explicitly rather than hidden inside the option learner.
 - GVFs as the right abstraction for auxiliary predictions and subtask definitions.
 - Utility accounting and curation as separate interfaces.
 - Per-weight meta step sizes as an explicit contract, not just an optimizer detail.
-- The option keyboard as an optional extension.
+- The option keyboard as an optional internal OaK mechanism.
 - Framework-agnostic interfaces that do not assume PyTorch, JAX, CNNs, or LLMs.
 
 ### Keep from the Gemini report
@@ -111,12 +134,13 @@ Decision:
 
 The implementation in `src/oak_architecture` follows these decisions:
 
-- `types.py` defines the shared objects needed by the architecture: transitions, GVF specs, subtask specs, option descriptors, model predictions, planning updates, utility records, and curation decisions.
-- `interfaces.py` defines the contracts for the base agent plus the OaK extensions.
-- `agent.py` provides a reference wiring skeleton showing a single temporally uniform step, including perception update, value/model/option updates, feature proposal, subtask generation, budgeted planning, action selection, utility observation, and curation.
+- `types.py` defines the shared objects needed by the architecture, and the smoke implementation makes `State` explicit as a concrete runtime object.
+- `interfaces.py` defines the four primary AoK blocks first, then the more detailed internal OaK mechanisms around them.
+- `agent.py` provides a reference wiring skeleton showing a single temporally uniform step, still including the finer-grained OaK processes, but without hiding the four-block core.
 
 The main structural choices are:
 
+- Keep the four Sutton blocks visually and semantically explicit.
 - Keep a clean split between the base agent and the OaK abstraction machinery.
 - Treat feature construction, subtask generation, option learning, and option-model learning as separate replaceable modules.
 - Keep `MetaStepSizeLearner` explicit because Sutton singles out per-weight online meta-learning as a defining feature.
@@ -125,11 +149,19 @@ The main structural choices are:
 
 ## Rendered diagrams
 
-### Mermaid architecture overview
+### High-level four-block Mermaid view
+
+![High-level four-block Mermaid view](./img/oak_core_marmaid.svg)
+
+### Detailed Mermaid OaK view
 
 ![Mermaid architecture overview](./img/oak_architecture_marmaid.svg)
 
-### PlantUML component view
+### High-level four-block PlantUML view
+
+![High-level four-block PlantUML view](./img/oak_core.svg)
+
+### Detailed PlantUML OaK view
 
 ![PlantUML component view](./img/oak_architecture.svg)
 

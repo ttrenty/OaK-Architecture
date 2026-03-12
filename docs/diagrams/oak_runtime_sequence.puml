@@ -6,21 +6,21 @@ participant Perception
 participant "Feature Constructor" as FeatureConstructor
 participant "Feature Ranker" as FeatureRanker
 participant "Subtask Generator" as SubtaskGenerator
-participant "Value Function Bank" as ValueFunctionBank
+participant "Value Function" as ValueFunction
 participant "Option Learner" as OptionLearner
 participant "Option Model Learner" as OptionModelLearner
 participant "Transition Model" as TransitionModel
-participant Planner
+participant Planning
 participant "Reactive Policy" as ReactivePolicy
 participant "Utility Assessor" as UtilityAssessor
 participant Curator
 
 == Foreground ==
 World -> Perception : obs_t, r_t, a_(t-1)
-Perception -> Perception : update subjective state s_t
+Perception -> Perception : update state s_t
 
 opt previous transition exists
-  Perception -> ValueFunctionBank : update GVFs
+  Perception -> ValueFunction : update main and auxiliary values
   Perception -> OptionLearner : update option learning
   Perception -> OptionModelLearner : update option models
   Perception -> TransitionModel : update action model
@@ -35,15 +35,15 @@ Perception -> ReactivePolicy : state s_t
 ReactivePolicy -> World : primitive action or action from active option
 
 == Background ==
-Planner -> TransitionModel : budgeted planning queries
-Planner -> ValueFunctionBank : backup targets
-Planner -> ReactivePolicy : policy improvement signal
+Planning -> TransitionModel : budgeted planning queries
+Planning -> ValueFunction : backup targets
+Planning -> ReactivePolicy : policy improvement signal
 
 == Utility and curation ==
 FeatureRanker -> UtilityAssessor : feature usage
 OptionLearner -> UtilityAssessor : option usage
 TransitionModel -> UtilityAssessor : planning utility
-Planner -> UtilityAssessor : search statistics
+Planning -> UtilityAssessor : search statistics
 UtilityAssessor -> Curator : utility scores
 Curator -> OptionLearner : prune low-utility subtasks
 Curator -> TransitionModel : prune low-utility option models

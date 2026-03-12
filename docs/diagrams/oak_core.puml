@@ -1,0 +1,24 @@
+@startuml
+title OaK high-level four-block view
+
+skinparam componentStyle rectangle
+
+actor World as W
+
+[Perception] as Perception
+[State] as State
+[Reactive Policy] as ReactivePolicy
+[Value Function] as ValueFunction
+[Transition Model] as TransitionModel
+
+W --> Perception : observation, reward, last action
+Perception --> State : produces
+State --> ReactivePolicy : current state
+State --> ValueFunction : current state
+State --> TransitionModel : current state
+ReactivePolicy --> W : action
+ValueFunction ..> ReactivePolicy : learning signal
+TransitionModel ..> ReactivePolicy : planning signal
+TransitionModel ..> ValueFunction : predicted consequences
+
+@enduml

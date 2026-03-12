@@ -1,4 +1,5 @@
 from .agent import OaKAgent
+from . import implementations
 from .interfaces import (
     Curator,
     FeatureBank,
@@ -18,7 +19,7 @@ from .interfaces import (
     SubtaskGenerator,
     TransitionModel,
     UtilityAssessor,
-    ValueFunctionBank,
+    ValueFunction,
     World,
 )
 from .types import (
@@ -51,6 +52,7 @@ __all__ = [
     "FeatureSpec",
     "GVFLearner",
     "GVFSpec",
+    "implementations",
     "MetaStepSizeLearner",
     "ModelPrediction",
     "OaKAgent",
@@ -74,6 +76,6 @@ __all__ = [
     "UsageRecord",
     "UtilityAssessor",
     "UtilityRecord",
-    "ValueFunctionBank",
+    "ValueFunction",
     "World",
 ]

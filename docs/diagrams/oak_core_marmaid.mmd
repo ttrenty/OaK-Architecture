@@ -1,0 +1,17 @@
+flowchart LR
+  World["World"]
+  Perception["Perception"]
+  State["State"]
+  ReactivePolicy["Reactive Policy"]
+  ValueFunction["Value Function"]
+  TransitionModel["Transition Model"]
+
+  World -->|observation, reward| Perception
+  Perception -->|produces| State
+  State --> ReactivePolicy
+  State --> ValueFunction
+  State --> TransitionModel
+  ReactivePolicy -->|action| World
+  ValueFunction -.->|learning| ReactivePolicy
+  TransitionModel -.->|planning| ReactivePolicy
+  TransitionModel -.->|predicted consequences| ValueFunction

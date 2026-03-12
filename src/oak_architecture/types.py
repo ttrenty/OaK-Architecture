@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+"""Shared data structures used by the OaK interface package."""
+
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Generic, Mapping, Optional, Sequence, TypeAlias, TypeVar
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Mapping,
+    Optional,
+    Sequence,
+    TypeAlias,
+    TypeVar,
+)
 
 ObsT = TypeVar("ObsT")
 ActT = TypeVar("ActT")
+# StateT is the agent's learned internal state summary.
 StateT = TypeVar("StateT")
 InfoT = TypeVar("InfoT", bound=Mapping[str, Any])
 
@@ -17,6 +29,8 @@ ComponentId: TypeAlias = str
 
 
 class ComponentKind(str, Enum):
+    """Kinds of learnable or managed elements in the architecture."""
+
     FEATURE = "feature"
     SUBTASK = "subtask"
     OPTION = "option"
@@ -30,6 +44,8 @@ class ComponentKind(str, Enum):
 
 @dataclass(slots=True, frozen=True)
 class TimeStep(Generic[ObsT, InfoT]):
+    """One environment emission seen by the agent."""
+
     observation: ObsT
     reward: float
     terminated: bool = False
@@ -38,7 +54,9 @@ class TimeStep(Generic[ObsT, InfoT]):
 
 
 @dataclass(slots=True, frozen=True)
-class Transition(Generic[ObsT, ActT, StateT]):
+class Transition(Generic[ObsT, ActT, StateT, InfoT]):
+    """One state transition in agent terms."""
+
     state: StateT
     action: ActT
     reward: float
@@ -46,16 +64,18 @@ class Transition(Generic[ObsT, ActT, StateT]):
     observation: Optional[ObsT] = None
     next_observation: Optional[ObsT] = None
     terminated: bool = False
-    info: Mapping[str, Any] = field(default_factory=dict)
+    info: Optional[InfoT] = None
 
 
-ScalarSignal: TypeAlias = Callable[[Transition[Any, Any, Any]], float]
-ContinuationFn: TypeAlias = Callable[[Transition[Any, Any, Any]], float]
-TerminationValueFn: TypeAlias = Callable[[Transition[Any, Any, Any]], float]
+ScalarSignal: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
+ContinuationFn: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
+TerminationValueFn: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
 
 
 @dataclass(slots=True, frozen=True)
 class FeatureSpec:
+    """Metadata describing a feature tracked by the agent."""
+
     feature_id: FeatureId
     name: str
     description: str = ""
@@ -64,6 +84,8 @@ class FeatureSpec:
 
 @dataclass(slots=True, frozen=True)
 class FeatureCandidate:
+    """A proposed feature that may be admitted into the feature bank."""
+
     feature_id: FeatureId
     name: str
     origin: str
@@ -73,6 +95,8 @@ class FeatureCandidate:
 
 @dataclass(slots=True, frozen=True)
 class GVFSpec:
+    """General value function specification."""
+
     gvf_id: GVFId
     name: str
     cumulant: ScalarSignal
@@ -83,16 +107,20 @@ class GVFSpec:
 
 @dataclass(slots=True, frozen=True)
 class SubtaskSpec:
+    """A feature-grounded subtask description."""
+
     subtask_id: SubtaskId
     name: str
     feature_id: FeatureId
     intensity: float = 1.0
-    gvf_id: Optional[ ] = None
+    gvf_id: Optional[GVFId] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
 class OptionDescriptor:
+    """Lightweight metadata for an option."""
+
     option_id: OptionId
     name: str
     subtask_id: Optional[SubtaskId] = None
@@ -101,6 +129,8 @@ class OptionDescriptor:
 
 @dataclass(slots=True, frozen=True)
 class PolicyDecision(Generic[ActT]):
+    """Return type for reactive policy selection."""
+
     action: Optional[ActT] = None
     option_id: Optional[OptionId] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -109,12 +139,16 @@ class PolicyDecision(Generic[ActT]):
         has_action = self.action is not None
         has_option = self.option_id is not None
         if has_action == has_option:
-            raise ValueError("PolicyDecision requires exactly one of action or option_id.")
+            raise ValueError(
+                "PolicyDecision requires exactly one of action or option_id."
+            )
 
 
 @dataclass(slots=True, frozen=True)
 class ModelPrediction(Generic[StateT]):
-    next_state: StateT
+    """Prediction returned by an action or option model."""
+
+    predicted_state: StateT
     cumulative_reward: float
     steps: Optional[int] = None
     terminated: bool = False
@@ -123,6 +157,8 @@ class ModelPrediction(Generic[StateT]):
 
 @dataclass(slots=True, frozen=True)
 class PlanningUpdate(Generic[ActT]):
+    """Outputs from one planning pass."""
+
     value_targets: Mapping[GVFId, float] = field(default_factory=dict)
     policy_targets: Mapping[str, Any] = field(default_factory=dict)
     search_statistics: Mapping[str, Any] = field(default_factory=dict)
@@ -130,6 +166,8 @@ class PlanningUpdate(Generic[ActT]):
 
 @dataclass(slots=True, frozen=True)
 class UsageRecord:
+    """Usage evidence gathered for utility assessment."""
+
     kind: ComponentKind
     component_id: ComponentId
     amount: float = 1.0
@@ -138,6 +176,8 @@ class UsageRecord:
 
 @dataclass(slots=True, frozen=True)
 class UtilityRecord:
+    """Utility score for one architectural element."""
+
     kind: ComponentKind
     component_id: ComponentId
     utility: float
@@ -146,6 +186,8 @@ class UtilityRecord:
 
 @dataclass(slots=True, frozen=True)
 class CurationDecision:
+    """Pruning decision returned by the curator."""
+
     drop_features: Sequence[FeatureId] = field(default_factory=tuple)
     drop_subtasks: Sequence[SubtaskId] = field(default_factory=tuple)
     drop_options: Sequence[OptionId] = field(default_factory=tuple)
@@ -156,6 +198,8 @@ class CurationDecision:
 
 @dataclass(slots=True, frozen=True)
 class AgentStepResult(Generic[ActT, StateT]):
+    """Observable result of one OaK agent step."""
+
     action: ActT
     state: StateT
     active_option_id: Optional[OptionId] = None

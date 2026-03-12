@@ -8,7 +8,30 @@ version = "0.1.0"
 description = "Interfaces and reference wiring for a prototype OaK agent"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "MIT"
+authors = [
+  { name = "OaK Architecture Contributors" }
+]
+keywords = ["reinforcement-learning", "oak", "rich-sutton", "interfaces", "agent-architecture"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/oak-architecture"
+Documentation = "https://github.com/example/oak-architecture/tree/main/docs"
+Repository = "https://github.com/example/oak-architecture"
+
+[project.optional-dependencies]
+dev = [
+  "build>=1.2",
+  "pdoc>=15",
+]
 
 [tool.setuptools.package-dir]
 "" = "src"

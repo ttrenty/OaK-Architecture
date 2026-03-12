@@ -1,39 +1,48 @@
 flowchart LR
+  World["World"]
+
+  subgraph Core["Core AoK agent in Sutton's original naming"]
+    Perception["Perception"]
+    State["State"]
+    ReactivePolicy["Reactive Policy"]
+    ValueFunction["Value Function"]
+    TransitionModel["Transition Model"]
+  end
+
   World -->|observation, reward| Perception
-  Perception -->|subjective state| ReactivePolicy
-  Perception -->|subjective state| ValueFunctionBank
-  Perception -->|subjective state| TransitionModel
-  ReactivePolicy -->|primitive action| World
+  Perception -->|produces| State
+  State --> ReactivePolicy
+  State --> ValueFunction
+  State --> TransitionModel
+  ReactivePolicy -->|action| World
+  ValueFunction -->|learning signal| ReactivePolicy
+  TransitionModel -->|planning signal| ReactivePolicy
+  TransitionModel -->|simulated consequences| ValueFunction
 
-  Perception -->|feature activity| FeatureBank
-  FeatureConstructor -->|candidate features| FeatureBank
-  FeatureBank -->|current features| FeatureRanker
-  FeatureRanker -->|ranked feature ids| SubtaskGenerator
-  SubtaskGenerator -->|reward-respecting subtasks| OptionLearner
-  OptionLearner -->|learned options| OptionLibrary
-  OptionLearner -->|execution traces| OptionModelLearner
-  OptionModelLearner -->|option models| TransitionModel
+  subgraph Detailed["Detailed internal OaK mechanisms"]
+    FeatureConstruction["Feature Construction"]
+    SubTask["SubTask"]
+    OptionLearner["Option"]
+    OptionModel["Option Model"]
+    Planning["Planning"]
+    UtilityAssessor["Utility Assessor"]
+    Curator["Curator"]
+    OptionKeyboard["Option Keyboard (optional)"]
+  end
 
-  ValueFunctionBank -->|value estimates| Planner
-  TransitionModel -->|action and option predictions| Planner
-  Planner -->|policy targets| ReactivePolicy
-  Planner -->|value targets| ValueFunctionBank
-
-  MetaStepSizeLearner -.->|per-weight step sizes| Perception
-  MetaStepSizeLearner -.->|per-weight step sizes| ReactivePolicy
-  MetaStepSizeLearner -.->|per-weight step sizes| ValueFunctionBank
-  MetaStepSizeLearner -.->|per-weight step sizes| TransitionModel
-
-  FeatureBank -->|feature usage| UtilityAssessor
-  OptionLibrary -->|option usage| UtilityAssessor
-  TransitionModel -->|planning utility| UtilityAssessor
-  Planner -->|search statistics| UtilityAssessor
-  UtilityAssessor -->|utility scores| Curator
-  Curator -->|prune or replace| FeatureBank
-  Curator -->|prune or replace| OptionLearner
-  Curator -->|prune or replace| OptionLibrary
-  Curator -->|prune or replace| TransitionModel
-
-  FeatureBank -.->|feature keys| OptionKeyboard
-  OptionLibrary -.->|basis options| OptionKeyboard
-  OptionKeyboard -.->|composed option descriptor| ReactivePolicy
+  State -.->|interesting features| FeatureConstruction
+  FeatureConstruction -.-> SubTask
+  SubTask -.-> OptionLearner
+  OptionLearner -.-> OptionModel
+  OptionModel -.-> TransitionModel
+  TransitionModel -.-> Planning
+  Planning -.-> ValueFunction
+  Planning -.-> ReactivePolicy
+  FeatureConstruction -.-> UtilityAssessor
+  OptionLearner -.-> UtilityAssessor
+  TransitionModel -.-> UtilityAssessor
+  UtilityAssessor -.-> Curator
+  Curator -.-> FeatureConstruction
+  Curator -.-> OptionLearner
+  Curator -.-> OptionModel
+  OptionKeyboard -.-> ReactivePolicy

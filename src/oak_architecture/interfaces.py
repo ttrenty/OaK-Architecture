@@ -1,4 +1,5 @@
 from __future__ import annotations
+"""Abstract interfaces for the OaK architecture."""
 
 from abc import ABC, abstractmethod
 from typing import (
@@ -13,7 +14,6 @@ from typing import (
 
 from .types import (
     ActT,
-    AgentStepResult,
     ComponentId,
     CurationDecision,
     FeatureCandidate,
@@ -40,19 +40,26 @@ from .types import (
 
 @runtime_checkable
 class World(Protocol[ObsT, ActT, InfoT]):
+    """Minimal environment protocol used by the agent."""
+
     def reset(self) -> TimeStep[ObsT, InfoT]: ...
 
     def step(self, action: ActT) -> TimeStep[ObsT, InfoT]: ...
 
 
 class Perception(ABC, Generic[ObsT, ActT, StateT]):
+    """Builds and updates the state seen by the other AoK blocks."""
+
     @abstractmethod
     def reset(self) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def update(
-        self, observation: ObsT, reward: float, last_action: Optional[ActT]
+        self,
+        observation: ObsT,
+        reward: float,
+        last_action: Optional[ActT],
     ) -> StateT:
         raise NotImplementedError
 
@@ -62,12 +69,17 @@ class Perception(ABC, Generic[ObsT, ActT, StateT]):
 
 
 class FeatureBank(ABC, Generic[StateT]):
+    """Stores currently active features and their activations."""
+
     @abstractmethod
     def list_features(self) -> Sequence[FeatureSpec]:
         raise NotImplementedError
 
     @abstractmethod
-    def activations(self, state: StateT) -> Mapping[FeatureId, float]:
+    def activations(
+        self,
+        state: StateT,
+    ) -> Mapping[FeatureId, float]:
         raise NotImplementedError
 
     @abstractmethod
@@ -82,6 +94,8 @@ class FeatureBank(ABC, Generic[StateT]):
 
 
 class FeatureConstructor(ABC, Generic[StateT]):
+    """Proposes new candidate features."""
+
     @abstractmethod
     def propose(
         self,
@@ -92,6 +106,8 @@ class FeatureConstructor(ABC, Generic[StateT]):
 
 
 class FeatureRanker(ABC):
+    """Ranks features for downstream use."""
+
     @abstractmethod
     def rank(
         self,
@@ -103,6 +119,8 @@ class FeatureRanker(ABC):
 
 
 class SubtaskGenerator(ABC, Generic[StateT]):
+    """Maps ranked features to subtasks."""
+
     @abstractmethod
     def generate(
         self,
@@ -112,24 +130,32 @@ class SubtaskGenerator(ABC, Generic[StateT]):
         raise NotImplementedError
 
 
-class GVFLearner(ABC, Generic[StateT, ActT]):
+class GVFLearner(ABC, Generic[StateT, ActT, InfoT]):
+    """Learns one GVF online."""
+
     @property
     @abstractmethod
     def spec(self) -> GVFSpec:
         raise NotImplementedError
 
     @abstractmethod
-    def predict(self, state: StateT, action: Optional[ActT] = None) -> float:
+    def predict(
+        self,
+        state: StateT,
+        action: Optional[ActT] = None,
+    ) -> float:
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, transition: Transition[Any, ActT, StateT]) -> float:
+    def update(self, transition: Transition[Any, ActT, StateT, InfoT]) -> float:
         raise NotImplementedError
 
 
-class ValueFunctionBank(ABC, Generic[StateT, ActT]):
+class ValueFunction(ABC, Generic[StateT, ActT, InfoT]):
+    """Owns the main and auxiliary value learners."""
+
     @abstractmethod
-    def list_gvfs(self) -> Sequence[GVFLearner[StateT, ActT]]:
+    def list_gvfs(self) -> Sequence[GVFLearner[StateT, ActT, InfoT]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -138,12 +164,12 @@ class ValueFunctionBank(ABC, Generic[StateT, ActT]):
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, StateT]
+        self, transition: Transition[Any, ActT, StateT, InfoT]
     ) -> Mapping[GVFId, float]:
         raise NotImplementedError
 
     @abstractmethod
-    def add_or_replace(self, learner: GVFLearner[StateT, ActT]) -> None:
+    def add_or_replace(self, learner: GVFLearner[StateT, ActT, InfoT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -152,6 +178,8 @@ class ValueFunctionBank(ABC, Generic[StateT, ActT]):
 
 
 class Option(ABC, Generic[StateT, ActT]):
+    """Temporal abstraction consisting of policy and termination."""
+
     @property
     @abstractmethod
     def descriptor(self) -> OptionDescriptor:
@@ -171,6 +199,8 @@ class Option(ABC, Generic[StateT, ActT]):
 
 
 class OptionLibrary(ABC, Generic[StateT, ActT]):
+    """Stores learned options."""
+
     @abstractmethod
     def list_options(self) -> Sequence[Option[StateT, ActT]]:
         raise NotImplementedError
@@ -188,13 +218,15 @@ class OptionLibrary(ABC, Generic[StateT, ActT]):
         raise NotImplementedError
 
 
-class OptionLearner(ABC, Generic[StateT, ActT]):
+class OptionLearner(ABC, Generic[StateT, ActT, InfoT]):
+    """Learns options from subtasks and experience."""
+
     @abstractmethod
     def ingest_subtasks(self, subtasks: Sequence[SubtaskSpec]) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def update(self, transition: Transition[Any, ActT, StateT]) -> None:
+    def update(self, transition: Transition[Any, ActT, StateT, InfoT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -207,19 +239,26 @@ class OptionLearner(ABC, Generic[StateT, ActT]):
 
 
 class OptionModel(ABC, Generic[StateT]):
+    """Predictive model for one option."""
+
     @property
     @abstractmethod
     def option_id(self) -> OptionId:
         raise NotImplementedError
 
     @abstractmethod
-    def predict(self, state: StateT) -> ModelPrediction[StateT]:
+    def predict(
+        self,
+        state: StateT,
+    ) -> ModelPrediction[StateT]:
         raise NotImplementedError
 
 
-class OptionModelLearner(ABC, Generic[StateT, ActT]):
+class OptionModelLearner(ABC, Generic[StateT, ActT, InfoT]):
+    """Learns option models from experience."""
+
     @abstractmethod
-    def update(self, transition: Transition[Any, ActT, StateT]) -> None:
+    def update(self, transition: Transition[Any, ActT, StateT, InfoT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -227,18 +266,26 @@ class OptionModelLearner(ABC, Generic[StateT, ActT]):
         raise NotImplementedError
 
 
-class TransitionModel(ABC, Generic[StateT, ActT]):
+class TransitionModel(ABC, Generic[StateT, ActT, InfoT]):
+    """Predictive world model for actions and options."""
+
     @abstractmethod
-    def update(self, transition: Transition[Any, ActT, StateT]) -> None:
+    def update(self, transition: Transition[Any, ActT, StateT, InfoT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def predict_action(self, state: StateT, action: ActT) -> ModelPrediction[StateT]:
+    def predict_action(
+        self,
+        state: StateT,
+        action: ActT,
+    ) -> ModelPrediction[StateT]:
         raise NotImplementedError
 
     @abstractmethod
     def predict_option(
-        self, state: StateT, option_id: OptionId
+        self,
+        state: StateT,
+        option_id: OptionId,
     ) -> ModelPrediction[StateT]:
         raise NotImplementedError
 
@@ -253,19 +300,23 @@ class TransitionModel(ABC, Generic[StateT, ActT]):
         raise NotImplementedError
 
 
-class Planner(ABC, Generic[StateT, ActT]):
+class Planner(ABC, Generic[StateT, ActT, InfoT]):
+    """Produces planning updates from the transition model."""
+
     @abstractmethod
     def plan_step(
         self,
         state: StateT,
-        model: TransitionModel[StateT, ActT],
-        values: ValueFunctionBank[StateT, ActT],
+        model: TransitionModel[StateT, ActT, InfoT],
+        value_function: ValueFunction[StateT, ActT, InfoT],
         budget: int,
     ) -> PlanningUpdate[ActT]:
         raise NotImplementedError
 
 
 class ReactivePolicy(ABC, Generic[StateT, ActT]):
+    """Chooses primitive actions or options from the current state."""
+
     @abstractmethod
     def decide(
         self,
@@ -277,7 +328,9 @@ class ReactivePolicy(ABC, Generic[StateT, ActT]):
 
     @abstractmethod
     def update_from_values(
-        self, state: StateT, td_errors: Mapping[GVFId, float]
+        self,
+        state: StateT,
+        td_errors: Mapping[GVFId, float],
     ) -> None:
         raise NotImplementedError
 
@@ -287,12 +340,16 @@ class ReactivePolicy(ABC, Generic[StateT, ActT]):
 
 
 class OptionKeyboard(ABC):
+    """Optional composition interface for combining options."""
+
     @abstractmethod
     def compose(self, intensities: Sequence[float]) -> OptionDescriptor:
         raise NotImplementedError
 
 
 class MetaStepSizeLearner(ABC):
+    """Tracks or adapts per-component step-size metadata."""
+
     @abstractmethod
     def update(
         self, component_id: ComponentId, error_signals: Mapping[str, float]
@@ -305,6 +362,8 @@ class MetaStepSizeLearner(ABC):
 
 
 class UtilityAssessor(ABC):
+    """Aggregates usage signals into utility estimates."""
+
     @abstractmethod
     def observe(self, usage: Sequence[UsageRecord]) -> None:
         raise NotImplementedError
@@ -315,6 +374,8 @@ class UtilityAssessor(ABC):
 
 
 class Curator(ABC):
+    """Prunes low-utility architectural elements."""
+
     @abstractmethod
     def curate(self, utilities: Sequence[UtilityRecord]) -> CurationDecision:
         raise NotImplementedError

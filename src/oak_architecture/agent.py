@@ -1,7 +1,8 @@
 from __future__ import annotations
+"""Reference agent wiring for the OaK architecture."""
 
 from dataclasses import dataclass
-from typing import Any, Generic, Mapping, Optional, Sequence
+from typing import Generic, Optional, Sequence
 
 from .interfaces import (
     Curator,
@@ -19,7 +20,7 @@ from .interfaces import (
     SubtaskGenerator,
     TransitionModel,
     UtilityAssessor,
-    ValueFunctionBank,
+    ValueFunction,
 )
 from .types import (
     ActT,
@@ -27,6 +28,7 @@ from .types import (
     ComponentKind,
     CurationDecision,
     FeatureId,
+    InfoT,
     ObsT,
     OptionId,
     PlanningUpdate,
@@ -39,19 +41,21 @@ from .types import (
 
 
 @dataclass
-class OaKAgent(Generic[ObsT, ActT, StateT]):
+class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
+    """Coordinates one full OaK step across all registered components."""
+
     perception: Perception[ObsT, ActT, StateT]
     feature_bank: FeatureBank[StateT]
     feature_constructor: FeatureConstructor[StateT]
     feature_ranker: FeatureRanker
     subtask_generator: SubtaskGenerator[StateT]
-    value_functions: ValueFunctionBank[StateT, ActT]
+    value_function: ValueFunction[StateT, ActT, InfoT]
     reactive_policy: ReactivePolicy[StateT, ActT]
     option_library: OptionLibrary[StateT, ActT]
-    option_learner: OptionLearner[StateT, ActT]
-    option_model_learner: OptionModelLearner[StateT, ActT]
-    transition_model: TransitionModel[StateT, ActT]
-    planner: Planner[StateT, ActT]
+    option_learner: OptionLearner[StateT, ActT, InfoT]
+    option_model_learner: OptionModelLearner[StateT, ActT, InfoT]
+    transition_model: TransitionModel[StateT, ActT, InfoT]
+    planner: Planner[StateT, ActT, InfoT]
     utility_assessor: UtilityAssessor
     curator: Curator
     meta_step_sizes: Optional[MetaStepSizeLearner] = None
@@ -64,6 +68,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
     last_observation: Optional[ObsT] = None
 
     def reset(self) -> None:
+        """Clear transient execution state."""
         self.perception.reset()
         self.active_option = None
         self.last_action = None
@@ -71,8 +76,9 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         self.last_observation = None
 
     def step(
-        self, time_step: TimeStep[ObsT, Mapping[str, Any]]
+        self, time_step: TimeStep[ObsT, InfoT]
     ) -> AgentStepResult[ActT, StateT]:
+        """Run one temporally uniform agent step."""
         state = self.perception.update(
             observation=time_step.observation,
             reward=time_step.reward,
@@ -93,12 +99,13 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
                 observation=self.last_observation,
                 next_observation=time_step.observation,
                 terminated=time_step.terminated or time_step.truncated,
-                info=time_step.info or {},
+                info=time_step.info,
             )
             self._update_from_transition(transition)
 
         candidates = self.feature_constructor.propose(
-            state, self.feature_bank.list_features()
+            state,
+            self.feature_bank.list_features(),
         )
         if candidates:
             self.feature_bank.add_candidates(candidates)
@@ -124,7 +131,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         planning_update = self.planner.plan_step(
             state=state,
             model=self.transition_model,
-            values=self.value_functions,
+            value_function=self.value_function,
             budget=self.planning_budget,
         )
         self.reactive_policy.apply_planning_update(planning_update)
@@ -157,10 +164,15 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         )
 
     def _update_from_transition(
-        self, transition: Transition[ObsT, ActT, StateT]
+        self,
+        transition: Transition[ObsT, ActT, StateT, InfoT],
     ) -> None:
-        td_errors = self.value_functions.update(transition)
-        self.reactive_policy.update_from_values(transition.next_state, td_errors)
+        """Apply one observed transition to the learning subsystems."""
+        td_errors = self.value_function.update(transition)
+        self.reactive_policy.update_from_values(
+            transition.next_state,
+            td_errors,
+        )
         self.option_learner.update(transition)
         self.option_model_learner.update(transition)
         self.transition_model.update(transition)
@@ -172,7 +184,11 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
                 {"reward": transition.reward},
             )
 
-    def _select_action(self, state: StateT) -> tuple[ActT, Optional[OptionId]]:
+    def _select_action(
+        self,
+        state: StateT,
+    ) -> tuple[ActT, Optional[OptionId]]:
+        """Select a primitive action, continuing any active option if needed."""
         if self.active_option is not None:
             stop_probability = self.active_option.stop_probability(state)
             if stop_probability < self.option_stop_threshold:
@@ -207,6 +223,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         ranked_feature_ids: Sequence[FeatureId],
         active_option_id: Optional[OptionId],
     ) -> Sequence[UsageRecord]:
+        """Build minimal utility-accounting observations for the current step."""
         usage_records = [
             UsageRecord(ComponentKind.FEATURE, feature_id)
             for feature_id in ranked_feature_ids
@@ -216,6 +233,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         return tuple(usage_records)
 
     def _apply_curation(self, decision: CurationDecision) -> None:
+        """Apply curator pruning decisions to the current agent state."""
         if decision.drop_features:
             self.feature_bank.remove(decision.drop_features)
         if decision.drop_subtasks:
@@ -230,4 +248,4 @@ class OaKAgent(Generic[ObsT, ActT, StateT]):
         if decision.drop_option_models:
             self.transition_model.remove_option_models(decision.drop_option_models)
         if decision.drop_gvfs:
-            self.value_functions.remove(decision.drop_gvfs)
+            self.value_function.remove(decision.drop_gvfs)
