@@ -7,36 +7,55 @@ version = "0.1.0"
 
 [tasks.build_package]
 cmd = "python -m build --no-isolation"
-inputs = ["pyproject.toml", "src/**/*.py"]
+inputs = [
+    "MANIFEST.in",
+    "README.md",
+    "pyproject.toml",
+    "examples/**/*.py",
+    "src/**/*.py",
+]
 outputs = ["dist/*"]
 
 [tasks.test]
-cmd = "python -m pip install -e . && python tst/run_minimal_oak.py"
+cmd = """
+bash -lc '
+python -m pip install -e . >/dev/null 2>&1 &&
+find tst -type f -name "*.py" | sort | while read -r path; do
+    echo "===== RUNNING: $path ====="
+    python "$path" || exit 1
+done
+'
+"""
+# inputs = ["pixi.toml", "pyproject.toml", "examples/**/*.py", "src/**/*.py", "tst/**/*.py"]
 
 [tasks.render_plantuml]
-cmd = "mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
+cmd = "mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_overview.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_overview.svg docs/api/img/oak_runtime_overview.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
 inputs = ["docs/diagrams/**/*.puml"]
 outputs = [
     "docs/api/img/oak_core.svg",
     "docs/api/img/oak_architecture.svg",
+    "docs/api/img/oak_runtime_overview.svg",
     "docs/api/img/oak_runtime_sequence.svg",
 ]
 
 [tasks.render_diagrams]
 depends-on = ["render_plantuml"]
 
-[tasks.docs_api]
-cmd = "python docs/tools/generate_api_docs.py && echo 'API documentation available at docs/api/index.md'"
+[tasks.docs]
+cmd = "python docs/tools/generate_api_docs.py && echo 'API documentation available at docs/api/index.html'"
 depends-on = ["render_diagrams"]
 inputs = [
     "src/**/*.py",
+    "docs/content/**/*.md",
     "docs/tools/generate_api_docs.py",
+    "docs/tools/pdoc_templates/**/*.jinja2",
+    "docs/tools/pdoc_templates/**/*.css",
     "docs/api/img/*.svg",
 ]
 outputs = ["docs/api/**"]
 
 [tasks.clean]
-cmd = "rm -rf dist build *.egg-info docs/api"
+cmd = "rm -rf dist build docs/api *.egg-info"
 
 [dependencies]
 python = ">=3.14.3,<3.15"

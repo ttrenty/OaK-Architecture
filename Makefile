@@ -1,9 +1,14 @@
+.PHONY: docs
+
 # Default goal if you just run `make`
 .DEFAULT_GOAL := help
 
 # Catch-all rule: any target becomes `pixi run <target>`
 %:
 	exec pixi run $@
+
+docs:
+	exec pixi run docs
 
 # Optional: allow passing extra args
 # Example:

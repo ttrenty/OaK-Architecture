@@ -1,0 +1,61 @@
+@startuml
+title OaKAgent.step(...): simplified runtime overview
+
+actor caller
+participant OaKAgent
+participant perception
+participant value_function
+participant option_learner
+participant option_model_learner
+participant transition_model
+participant feature_constructor
+participant feature_ranker
+participant subtask_generator
+participant option_library
+participant planner
+participant reactive_policy
+participant utility_assessor
+participant curator
+
+caller -> OaKAgent : step(time_step)
+
+group update current subjective_state
+  OaKAgent -> perception : update(...)
+  perception --> OaKAgent : subjective_state
+end
+
+group learn from transition [when a previous transition exists]
+  OaKAgent -> value_function : update(transition)
+  OaKAgent -> reactive_policy : update_from_values(...)
+  OaKAgent -> option_learner : update(transition)
+  OaKAgent -> option_model_learner : update(transition)
+  OaKAgent -> transition_model : update(transition)
+end
+
+group grow features and subtasks
+  OaKAgent -> feature_constructor : propose(...)
+  OaKAgent -> feature_ranker : rank(...)
+  OaKAgent -> subtask_generator : generate(...)
+  OaKAgent -> option_learner : ingest_subtasks(...)
+end
+
+group refresh executable structures
+  OaKAgent -> option_library : add_or_replace(...)
+  OaKAgent -> transition_model : add_or_replace_option_models(...)
+end
+
+group plan and choose action
+  OaKAgent -> planner : plan_step(...)
+  OaKAgent -> reactive_policy : apply_planning_update(...)
+  OaKAgent -> reactive_policy : decide(...)
+end
+
+group assess utility and curate
+  OaKAgent -> utility_assessor : observe(...)
+  OaKAgent -> utility_assessor : scores()
+  OaKAgent -> curator : curate(...)
+end
+
+OaKAgent --> caller : AgentStepResult(...)
+
+@enduml

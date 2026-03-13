@@ -1,117 +1,102 @@
 # OaK Architecture
 
-Python interfaces, diagrams, and a minimal runnable reference for experimenting
-with Richard Sutton's OaK architecture.
+`oak-architecture` is an interface-first Python package for experimenting with
+the OaK architecture vision associated with Richard Sutton.
 
-This repository is organized around three goals:
+The repository focuses on two things:
 
-- make the main OaK components explicit and easy to implement
-- provide a package that can be imported, extended, and tested
-- keep a very small smoke implementation that proves the interfaces fit
-  together end to end
+- a small, typed core package that defines the shared data structures,
+  component interfaces, and the canonical `OaKAgent` step loop
+- external example implementations that show how a separate project can build
+  on top of those interfaces
 
-## What is in this repository
+The goal is to make comparative implementation work **possible**. The package
+provides the contracts and runtime wiring; concrete learning systems can live
+outside the package and evolve independently.
 
-- `src/oak_architecture/`
-  Core package with shared types, interface definitions, the reference
-  `OaKAgent` execution loop, and a minimal implementation under
-  `oak_architecture.implementations`.
-- `docs/`
-  Documentation sources, diagrams, API-doc templates, and generated API docs.
-- `ressources/`
-  Background material and source notes.
-- `tst/`
-  Runnable smoke checks for the package.
+## Current scope
 
-## Architecture at a glance
+The published package is intentionally interface-only. Concrete examples in
+this repository live under `examples/` so they reflect how downstream users can
+implement the architecture in practice.
 
-The project keeps the four main OaK blocks visible:
+This repository currently provides:
 
-- `Perception`
-- `ReactivePolicy`
-- `ValueFunction`
-- `TransitionModel`
-
-`Perception` produces the agent `State`, and the other three blocks operate on
-that state. The package also includes interfaces for feature construction,
-subtasks, options, planning, utility assessment, and curation so a fuller OaK
-agent can be built incrementally.
-
-## Quick start
-
-Install the project environment with `pixi`, then use:
-
-```bash
-pixi run test
-pixi run docs_api
-pixi run render_diagrams
-pixi run build_package
-```
-
-These tasks do the following:
-
-- `pixi run test`
-  Install the package in editable mode and run the minimal smoke example in
-  `tst/run_minimal_oak.py`.
-- `pixi run docs_api`
-  Generate the documentation site into `docs/api/`. This task depends on
-  `render_diagrams`, so the authored guide pages and diagram assets are
-  created together.
-- `pixi run render_diagrams`
-  Regenerate the PlantUML SVG diagrams in `docs/api/img/`.
-- `pixi run build_package`
-  Build the source distribution and wheel in `dist/`.
-
-## Using the package
-
-Minimal example:
-
-```python
-from oak_architecture.implementations.minimal_oak import run_minimal_episode
-
-trace = run_minimal_episode(horizon=5)
-for step in trace:
-    print(step["action"], step["state"])
-```
-
-The minimal implementation is intentionally small. It is meant to show how the
-interfaces connect, not to serve as a finished learning system.
+- shared types such as `TimeStep`, `Transition`, `PlanningUpdate`, and
+  `AgentStepResult`
+- abstract interfaces for the main OaK components
+- the package's official `OaKAgent` coordinator that wires those components
+  together
+- a minimal external example implementation used as a smoke test
 
 ## Documentation
 
-Start with these files:
+Project documentation is published at:
 
-- [Source Markdown guides](./docs/content/)
-- [Generated API docs](./docs/api/index.html)
-- [Hosted API docs](https://ttrenty.github.io/OaK-Architecture/)
-- [Hosted overview](https://ttrenty.github.io/OaK-Architecture/overview.html)
-- [Hosted implementation guide](https://ttrenty.github.io/OaK-Architecture/implementation-guide.html)
-- [Hosted minimal agent tutorial](https://ttrenty.github.io/OaK-Architecture/tutorial-minimal-agent.html)
+- [GitHub Pages documentation](https://ttrenty.github.io/OaK-Architecture/)
 
-Key diagrams:
+The docs include:
 
-- [High-level PlantUML source](./docs/diagrams/oak_core.puml)
-- [Detailed PlantUML source](./docs/diagrams/oak_architecture.puml)
-- [Runtime sequence source](./docs/diagrams/oak_runtime_sequence.puml)
-- [Hosted rendered core diagram](https://ttrenty.github.io/OaK-Architecture/img/oak_core.svg)
-- [Hosted rendered architecture diagram](https://ttrenty.github.io/OaK-Architecture/img/oak_architecture.svg)
-- [Hosted rendered runtime sequence](https://ttrenty.github.io/OaK-Architecture/img/oak_runtime_sequence.svg)
+- an overview of the architecture
+- an implementation guide
+- a tutorial for the minimal external example
+- generated API reference pages for `oak_architecture`
 
-The repository also includes a GitHub Pages deployment workflow for the API
-docs in [.github/workflows/deploy-docs.yml](./.github/workflows/deploy-docs.yml).
-After enabling Pages with the `GitHub Actions` source in the repository
-settings, pushes to `main` will run `pixi run docs_api`, generate the API docs
-and rendered diagrams, and publish them to the hosted URL above.
+## Development
 
-## Project status
+### Environment setup
 
-The repository is currently interface-first:
+This project uses `pixi` for dependency management and task execution.
 
-- the package structure and typing are in place
-- the `OaKAgent` loop is wired end to end
-- the minimal implementation runs as a smoke test
-- major learning components still need real implementations
+Install `pixi` by following the official instructions:
 
-The main missing work is in the concrete algorithms: perception learning, value
-learning, transition modeling, option learning, planning control, utility
-assessment, and curation policy.
+- [Pixi installation guide](https://pixi.sh/latest/)
+
+On Unix-like systems, one common installation method is:
+
+```bash
+curl -fsSL https://pixi.sh/install.sh | sh
+# or with wget instead
+wget -qO- https://pixi.sh/install.sh | sh
+```
+
+Then install the project environment from the repository root:
+
+```bash
+pixi install
+```
+
+### Common tasks
+
+- `pixi run test`
+  Install the package in editable mode and run every Python test script in
+  `tst/`.
+- `pixi run docs_api`
+  Generate the API documentation site in `docs/api/`.
+- `pixi run render_diagrams`
+  Regenerate the rendered PlantUML diagrams used by the docs.
+- `pixi run build_package`
+  Build the source distribution and wheel in `dist/`.
+
+A `Makefile` is also provided for convenience, but it only forwards to
+`pixi run` commands.
+
+## Repository layout
+
+- `src/oak_architecture/`
+  Core package with shared types, interface definitions, and the canonical
+  `OaKAgent` execution loop.
+- `examples/`
+  Repository-level example implementations that use the package as an external
+  consumer would.
+- `tst/`
+  Runnable test scripts. `pixi run test` executes every `*.py` file in this
+  directory tree.
+- `docs/`
+  Documentation sources, diagrams, API-doc templates, and generated API docs.
+
+## Working in this repository
+
+If you want to prototype a concrete implementation in this repository, place it
+under `examples/` and add checks under `tst/`. Running `pixi run test` will
+pick up any new Python test file automatically.

@@ -8,6 +8,7 @@ docs/img/*
 __pycache__/
 *.py[codz]
 *$py.class
+latex/
 
 # C extensions
 *.so

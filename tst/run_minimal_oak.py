@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
 from pprint import pprint
+import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from examples.minimal_oak import build_minimal_agent, run_minimal_episode
 from oak_architecture import OaKAgent
-from oak_architecture.implementations.minimal_oak import (
-    build_minimal_agent,
-    run_minimal_episode,
-)
 
 
 def main() -> None:
+
     agent = build_minimal_agent()
     if not isinstance(agent, OaKAgent):
         raise TypeError("build_minimal_agent() did not return an OaKAgent")
@@ -26,6 +30,9 @@ def main() -> None:
 
     if any("action" not in step for step in trace):
         raise RuntimeError("Smoke run produced a step without an action")
+
+    if any("subjective_state" not in step for step in trace):
+        raise RuntimeError("Smoke run produced a step without a subjective_state")
 
     print("Minimal OaK smoke run")
     pprint(trace)

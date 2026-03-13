@@ -1,51 +1,152 @@
 @startuml
-title One OaK time step
+title OaKAgent.step(...): exact call order
 
-actor World
-participant Perception
-participant "Feature Constructor" as FeatureConstructor
-participant "Feature Ranker" as FeatureRanker
-participant "Subtask Generator" as SubtaskGenerator
-participant "Value Function" as ValueFunction
-participant "Option Learner" as OptionLearner
-participant "Option Model Learner" as OptionModelLearner
-participant "Transition Model" as TransitionModel
-participant Planning
-participant "Reactive Policy" as ReactivePolicy
-participant "Utility Assessor" as UtilityAssessor
-participant Curator
+actor caller
+participant OaKAgent
+participant perception
+participant feature_constructor
+participant feature_bank
+participant feature_ranker
+participant subtask_generator
+participant value_function
+participant option_learner
+participant option_library
+participant option_model_learner
+participant transition_model
+participant planner
+participant reactive_policy
+participant utility_assessor
+participant curator
+participant meta_step_sizes
+participant active_option
 
-== Foreground ==
-World -> Perception : obs_t, r_t, a_(t-1)
-Perception -> Perception : update state s_t
+rnote over OaKAgent, active_option
+Conditional sections below are labeled as groups.
+When two groups describe alternative branches,
+only one of them runs in a real step.
+endrnote
 
-opt previous transition exists
-  Perception -> ValueFunction : update main and auxiliary values
-  Perception -> OptionLearner : update option learning
-  Perception -> OptionModelLearner : update option models
-  Perception -> TransitionModel : update action model
+caller -> OaKAgent : step(time_step)
+activate OaKAgent
+
+OaKAgent -> perception : update(observation=time_step.observation,\nreward=time_step.reward,\nlast_action=self.last_action)
+perception --> OaKAgent : subjective_state
+
+group update from previous transition [when self.last_subjective_state is not None and self.last_action is not None]
+  OaKAgent -> OaKAgent : transition = Transition(...)
+  OaKAgent -> value_function : update(transition)
+  value_function --> OaKAgent : td_errors
+  OaKAgent -> reactive_policy : update_from_values(transition.next_subjective_state,\ntd_errors)
+  OaKAgent -> option_learner : update(transition)
+  OaKAgent -> option_model_learner : update(transition)
+  OaKAgent -> transition_model : update(transition)
+  group meta_step_sizes update [when self.meta_step_sizes is not None]
+    OaKAgent -> meta_step_sizes : update("value_functions", td_errors)
+    OaKAgent -> meta_step_sizes : update("transition_model", {"reward": transition.reward})
+  end
 end
 
-Perception -> FeatureConstructor : propose candidate features
-FeatureConstructor -> FeatureRanker : current and candidate features
-FeatureRanker -> SubtaskGenerator : top-ranked feature ids
-SubtaskGenerator -> OptionLearner : new reward-respecting subtasks
+OaKAgent -> feature_bank : list_features()
+feature_bank --> OaKAgent : active_features
+OaKAgent -> feature_constructor : propose(subjective_state,\nactive_features)
+feature_constructor --> OaKAgent : candidates
+group feature admission [when candidates is not empty]
+  OaKAgent -> feature_bank : add_candidates(candidates)
+end
 
-Perception -> ReactivePolicy : state s_t
-ReactivePolicy -> World : primitive action or action from active option
+OaKAgent -> feature_bank : list_features()
+feature_bank --> OaKAgent : current_features
+OaKAgent -> utility_assessor : scores()
+utility_assessor --> OaKAgent : utility_scores
+OaKAgent -> feature_ranker : rank(current_features, utility_scores,\nlimit=self.feature_budget)
+feature_ranker --> OaKAgent : ranked_feature_ids
 
-== Background ==
-Planning -> TransitionModel : budgeted planning queries
-Planning -> ValueFunction : backup targets
-Planning -> ReactivePolicy : policy improvement signal
+group subtask generation [when ranked_feature_ids is not empty]
+  OaKAgent -> subtask_generator : generate(ranked_feature_ids, feature_bank)
+  subtask_generator --> OaKAgent : created_subtasks
+  group subtask ingestion [when created_subtasks is not empty]
+    OaKAgent -> option_learner : ingest_subtasks(created_subtasks)
+  end
+end
 
-== Utility and curation ==
-FeatureRanker -> UtilityAssessor : feature usage
-OptionLearner -> UtilityAssessor : option usage
-TransitionModel -> UtilityAssessor : planning utility
-Planning -> UtilityAssessor : search statistics
-UtilityAssessor -> Curator : utility scores
-Curator -> OptionLearner : prune low-utility subtasks
-Curator -> TransitionModel : prune low-utility option models
+OaKAgent -> option_learner : export_options()
+option_learner --> OaKAgent : options
+loop for option in options
+  OaKAgent -> option_library : add_or_replace(option)
+end
+
+OaKAgent -> option_model_learner : export_models()
+option_model_learner --> OaKAgent : option_models
+OaKAgent -> transition_model : add_or_replace_option_models(option_models)
+
+OaKAgent -> planner : plan_step(subjective_state=subjective_state,\nmodel=self.transition_model,\nvalue_function=self.value_function,\nbudget=self.planning_budget)
+planner --> OaKAgent : planning_update
+OaKAgent -> reactive_policy : apply_planning_update(planning_update)
+
+group action selection
+group branch: active_option is available
+  OaKAgent -> active_option : stop_probability(subjective_state)
+  active_option --> OaKAgent : stop_probability
+  group branch: continue current active_option
+    OaKAgent -> active_option : act(subjective_state)
+    active_option --> OaKAgent : action
+  end
+  group branch: stop current active_option and request a new decision
+    OaKAgent -> OaKAgent : self.active_option = None
+    OaKAgent -> option_library : list_options()
+    option_library --> OaKAgent : available_options
+    OaKAgent -> reactive_policy : decide(subjective_state=subjective_state,\nactive_option=None,\navailable_options=available_options)
+    reactive_policy --> OaKAgent : decision
+    group branch: reactive_policy selects an option
+      OaKAgent -> option_library : get(decision.option_id)
+      option_library --> OaKAgent : self.active_option
+      OaKAgent -> active_option : act(subjective_state)
+      active_option --> OaKAgent : action
+    end
+    group branch: reactive_policy selects a primitive action
+      OaKAgent -> OaKAgent : action = decision.action
+    end
+  end
+end
+group branch: no active_option is available
+  OaKAgent -> option_library : list_options()
+  option_library --> OaKAgent : available_options
+  OaKAgent -> reactive_policy : decide(subjective_state=subjective_state,\nactive_option=None,\navailable_options=available_options)
+  reactive_policy --> OaKAgent : decision
+  group branch: reactive_policy selects an option
+    OaKAgent -> option_library : get(decision.option_id)
+    option_library --> OaKAgent : self.active_option
+    OaKAgent -> active_option : act(subjective_state)
+    active_option --> OaKAgent : action
+  end
+  group branch: reactive_policy selects a primitive action
+    OaKAgent -> OaKAgent : action = decision.action
+  end
+end
+end
+
+OaKAgent -> OaKAgent : usage_records = _build_usage_records(...)
+group usage observation [when usage_records is not empty]
+  OaKAgent -> utility_assessor : observe(usage_records)
+end
+
+OaKAgent -> utility_assessor : scores()
+utility_assessor --> OaKAgent : utility_scores
+group curation pass [when utility_scores is not empty]
+  OaKAgent -> curator : curate(utility_scores)
+  curator --> OaKAgent : curation_decision
+  OaKAgent -> OaKAgent : _apply_curation(curation_decision)
+end
+
+OaKAgent -> OaKAgent : self.last_subjective_state = subjective_state
+OaKAgent -> OaKAgent : self.last_observation = time_step.observation
+OaKAgent -> OaKAgent : self.last_action = action
+
+group episode boundary cleanup [when time_step.terminated or time_step.truncated]
+  OaKAgent -> OaKAgent : self.active_option = None
+end
+
+OaKAgent --> caller : AgentStepResult(...)
+deactivate OaKAgent
 
 @enduml
