@@ -37,10 +37,9 @@ Project documentation is published at:
 
 The docs include:
 
-- an overview of the architecture
-- an implementation guide
-- a tutorial for the minimal external example
-- generated API reference pages for `oak_architecture`
+- the API reference for `oak_architecture`
+- the architecture guide embedded directly into that API page
+- rendered diagrams for the OaK control flow and component layout
 
 ## Development
 
@@ -71,8 +70,10 @@ pixi install
 - `pixi run test`
   Install the package in editable mode and run every Python test script in
   `tst/`.
-- `pixi run docs_api`
+- `pixi run docs`
   Generate the API documentation site in `docs/api/`.
+- `pixi run docs_api`
+  Compatibility alias for `pixi run docs`.
 - `pixi run render_diagrams`
   Regenerate the rendered PlantUML diagrams used by the docs.
 - `pixi run build_package`
