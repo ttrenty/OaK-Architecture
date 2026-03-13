@@ -54,6 +54,9 @@ inputs = [
 ]
 outputs = ["docs/api/**"]
 
+[tasks.docs_api]
+depends-on = ["docs"]
+
 [tasks.clean]
 cmd = "rm -rf dist build docs/api *.egg-info"
 

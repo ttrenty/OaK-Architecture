@@ -28,7 +28,7 @@ jobs:
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
 
       - name: Generate API documentation
-        run: pixi run docs_api
+        run: pixi run docs
 
       - name: Assemble Pages artifact
         run: |
