@@ -1,98 +1,152 @@
 @startuml
-title OaK detailed architecture view
+title OaKAgent.step(...): architecture of calls and dependencies\n(OaKAgent orchestrates the whole step implicitly)
 
 left to right direction
+hide stereotype
+skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
-skinparam linetype ortho
-skinparam ranksep 100
+skinparam linetype polyline
+skinparam ranksep 140
 skinparam nodesep 70
 
-actor World as W
-
-package "Core runtime" {
-  [Perception] as Perception
-  [State] as State
-  [Reactive Policy] as ReactivePolicy
-  [Value Function Bank] as ValueFunction
-  [Transition Model] as TransitionModel
+skinparam package<<family>> {
+  BackgroundColor #FFF7DF
+  BorderColor #B45F06
+  FontColor #7A4A00
 }
 
-package "Representation and abstraction" {
-  [Feature Constructor] as FeatureConstructor
-  [Feature Bank] as FeatureBank
-  [Feature Ranker] as FeatureRanker
-  [Subtask Generator] as SubtaskGenerator
-  [Option Learner] as OptionLearner
-  [Option Library] as OptionLibrary
-  [Option Model Learner] as OptionModelLearner
-  [Option Keyboard\n(optional)] as OptionKeyboard
+skinparam rectangle<<main_component>> {
+  BackgroundColor #FFE599
+  BorderColor #B45F06
+  FontColor #5F3B00
+  FontStyle bold
 }
 
-package "Planning and maintenance" {
-  [Planner] as Planner
-  [Utility Assessor] as UtilityAssessor
-  [Curator] as Curator
-  [Meta Step-Size Learner] as MetaStepSizeLearner
+skinparam rectangle<<support_component>> {
+  BackgroundColor #F8F8F8
+  BorderColor #B7B7B7
+  FontColor #333333
 }
 
-W -[hidden]-> Perception
-Perception -[hidden]-> State
-State -[hidden]-> ReactivePolicy
-ReactivePolicy -[hidden]-> ValueFunction
-ValueFunction -[hidden]-> TransitionModel
+skinparam artifact {
+  BackgroundColor #F3F3F3
+  BorderColor #999999
+  FontColor #333333
+}
 
-FeatureConstructor -[hidden]-> FeatureBank
-FeatureBank -[hidden]-> FeatureRanker
-FeatureRanker -[hidden]-> SubtaskGenerator
-SubtaskGenerator -[hidden]-> OptionLearner
-OptionLearner -[hidden]-> OptionLibrary
-OptionLibrary -[hidden]-> OptionModelLearner
-OptionModelLearner -[hidden]-> OptionKeyboard
+actor caller
+artifact "time_step" as time_step
+artifact "subjective_state" as subjective_state
+artifact "transition" as transition
+artifact "planning_update" as planning_update
+artifact "action" as action
+artifact "step_memory\nlast_subjective_state\nlast_action\nlast_observation\nactive_option" as step_memory
 
-Planner -[hidden]-> UtilityAssessor
-UtilityAssessor -[hidden]-> Curator
-Curator -[hidden]-> MetaStepSizeLearner
+package "Perception family" <<family>> {
+  rectangle "perception" as perception <<main_component>>
+  rectangle "feature_constructor" as feature_constructor <<support_component>>
+  rectangle "feature_bank" as feature_bank <<support_component>>
+  rectangle "feature_ranker" as feature_ranker <<support_component>>
+  rectangle "subtask_generator" as subtask_generator <<support_component>>
 
-W --> Perception : observation,\nreward,\nlast action
-Perception --> State : produces
-State --> ReactivePolicy : current state
-State --> ValueFunction : current state
-State --> TransitionModel : current state
-ReactivePolicy --> W : action
-ValueFunction ..> ReactivePolicy : learning signal
-TransitionModel ..> Planner : model queries
-TransitionModel ..> ValueFunction : simulated\nconsequences
-Planner ..> ValueFunction : value targets
-Planner ..> ReactivePolicy : policy targets
+  perception -[hidden]down-> feature_constructor
+  feature_constructor -[hidden]down-> feature_bank
+  feature_bank -[hidden]down-> feature_ranker
+  feature_ranker -[hidden]down-> subtask_generator
+}
 
-State ..> FeatureBank : feature\nactivations
-State ..> FeatureConstructor : candidate\ncontext
-FeatureConstructor --> FeatureBank : candidate\nfeatures
-FeatureBank --> FeatureRanker : active\nfeatures
-FeatureRanker --> SubtaskGenerator : ranked\nfeature ids
-SubtaskGenerator --> OptionLearner : reward-respecting\nsubtasks
-OptionLearner --> OptionLibrary : learned\noptions
-OptionLearner --> OptionModelLearner : execution\ntraces
-OptionModelLearner --> TransitionModel : option\nmodels
-FeatureBank --> OptionKeyboard : feature\nkeys
-OptionLibrary --> OptionKeyboard : basis\noptions
-OptionKeyboard ..> ReactivePolicy : composed option\ndescriptor
+package "Transition Model family" <<family>> {
+  rectangle "planner" as planner <<support_component>>
+  rectangle "transition_model" as transition_model <<main_component>>
+  rectangle "option_model_learner" as option_model_learner <<support_component>>
 
-FeatureBank --> UtilityAssessor : feature\nusage
-OptionLibrary --> UtilityAssessor : option\nusage
-TransitionModel --> UtilityAssessor : planning\nutility
-Planner --> UtilityAssessor : search\nstatistics
-UtilityAssessor --> Curator : utility\nscores
-Curator --> FeatureBank : prune or\nreplace
-Curator --> OptionLearner : drop\nsubtasks
-Curator --> OptionLibrary : prune\noptions
-Curator --> TransitionModel : prune option\nmodels
-Curator --> ValueFunction : prune\nGVFs
+  planner -[hidden]down-> transition_model
+  transition_model -[hidden]down-> option_model_learner
+}
 
-MetaStepSizeLearner ..> Perception : per-weight\nstep sizes
-MetaStepSizeLearner ..> ReactivePolicy : per-weight\nstep sizes
-MetaStepSizeLearner ..> ValueFunction : per-weight\nstep sizes
-MetaStepSizeLearner ..> TransitionModel : per-weight\nstep sizes
+package "Value Function family" <<family>> {
+  rectangle "value_function" as value_function <<main_component>>
+  rectangle "utility_assessor" as utility_assessor <<support_component>>
+  rectangle "curator" as curator <<support_component>>
+  rectangle "meta_step_sizes" as meta_step_sizes <<support_component>>
+
+  value_function -[hidden]down-> utility_assessor
+  utility_assessor -[hidden]down-> curator
+  curator -[hidden]down-> meta_step_sizes
+}
+
+package "Reactive Policy family" <<family>> {
+  rectangle "reactive_policy" as reactive_policy <<main_component>>
+  rectangle "option_library" as option_library <<support_component>>
+  rectangle "option_learner" as option_learner <<support_component>>
+  rectangle "active_option" as active_option <<support_component>>
+
+  reactive_policy -[hidden]down-> option_library
+  option_library -[hidden]down-> option_learner
+  option_learner -[hidden]down-> active_option
+}
+
+perception -[hidden]right-> planner
+value_function -[hidden]right-> reactive_policy
+perception -[hidden]down-> value_function
+planner -[hidden]down-> reactive_policy
+
+caller --> time_step
+time_step --> perception : observation,\nreward,\nlast_action
+perception --> subjective_state : encode current state
+
+step_memory --> transition : previous state,\nprevious action
+time_step --> transition : reward,\ntermination
+subjective_state --> transition : next state
+
+subjective_state --> feature_constructor : propose candidates
+feature_bank --> feature_constructor : existing features
+feature_constructor --> feature_bank : add candidates
+feature_bank --> feature_ranker : current features
+utility_assessor --> feature_ranker : utility scores
+feature_ranker --> subtask_generator : ranked features
+subtask_generator --> option_learner : generated subtasks
+
+transition --> value_function : TD / value update
+transition --> reactive_policy : value-informed policy update
+transition --> option_learner : option learning update
+transition --> option_model_learner : option model update
+transition --> transition_model : model learning update
+transition --> meta_step_sizes : adaptation signals
+
+option_learner --> option_library : exported options
+option_model_learner --> transition_model : exported option models
+
+subjective_state --> planner : planning start state
+transition_model --> planner : predictive model
+value_function --> planner : bootstrap values
+planner --> planning_update : planning result
+planning_update --> reactive_policy : planning advice
+
+step_memory --> active_option : current option state
+subjective_state --> active_option : termination / act context
+active_option --> reactive_policy : continue or release control
+option_library --> reactive_policy : available options
+subjective_state --> reactive_policy : decision context
+value_function --> reactive_policy : value feedback
+reactive_policy --> action : primitive action\nor option choice
+
+reactive_policy --> utility_assessor : usage records
+utility_assessor --> curator : utility scores
+curator --> feature_bank : prune / retain
+curator --> option_library : prune / retain
+curator --> value_function : prune / retain
+
+subjective_state --> step_memory : store current state
+action --> step_memory : store chosen action
+time_step --> step_memory : store observation / cleanup
+action --> caller : AgentStepResult.action
+
+note bottom
+This diagram shows effective call and dependency flow during one step.
+OaKAgent is the central orchestrator of all interactions, but is omitted
+from the middle of the diagram to keep the architecture readable.
+end note
 
 @enduml

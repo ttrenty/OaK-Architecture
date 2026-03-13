@@ -8,8 +8,8 @@ the supplied components are called during one temporally uniform step.
 
 At a high level, one `step(...)` call does the following:
 
-1. Update `Perception` to obtain the current `State`.
-2. If a previous state/action exists, build a `Transition` and update the
+1. Update `Perception` to obtain the current subjective state.
+2. If a previous subjective_state/action exists, build a `Transition` and update the
    learning subsystems.
 3. Grow or rank features and subtasks.
 4. Refresh options and option models.
@@ -49,7 +49,7 @@ from .types import (
     ObsT,
     OptionId,
     PlanningUpdate,
-    StateT,
+    SubjectiveStateT,
     SubtaskSpec,
     TimeStep,
     Transition,
@@ -58,7 +58,7 @@ from .types import (
 
 
 @dataclass
-class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
+class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
     """Coordinates one full OaK step across all registered components.
 
     The agent is deliberately interface-first. It is best understood as a
@@ -66,40 +66,42 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
     ensures they are invoked in a consistent order.
     """
 
-    perception: Perception[ObsT, ActT, StateT]
-    feature_bank: FeatureBank[StateT]
-    feature_constructor: FeatureConstructor[StateT]
+    perception: Perception[ObsT, ActT, SubjectiveStateT]
+    feature_bank: FeatureBank[SubjectiveStateT]
+    feature_constructor: FeatureConstructor[SubjectiveStateT]
     feature_ranker: FeatureRanker
-    subtask_generator: SubtaskGenerator[StateT]
-    value_function: ValueFunction[StateT, ActT, InfoT]
-    reactive_policy: ReactivePolicy[StateT, ActT]
-    option_library: OptionLibrary[StateT, ActT]
-    option_learner: OptionLearner[StateT, ActT, InfoT]
-    option_model_learner: OptionModelLearner[StateT, ActT, InfoT]
-    transition_model: TransitionModel[StateT, ActT, InfoT]
-    planner: Planner[StateT, ActT, InfoT]
+    subtask_generator: SubtaskGenerator[SubjectiveStateT]
+    value_function: ValueFunction[SubjectiveStateT, ActT, InfoT]
+    reactive_policy: ReactivePolicy[SubjectiveStateT, ActT]
+    option_library: OptionLibrary[SubjectiveStateT, ActT]
+    option_learner: OptionLearner[SubjectiveStateT, ActT, InfoT]
+    option_model_learner: OptionModelLearner[SubjectiveStateT, ActT, InfoT]
+    transition_model: TransitionModel[SubjectiveStateT, ActT, InfoT]
+    planner: Planner[SubjectiveStateT, ActT, InfoT]
     utility_assessor: UtilityAssessor
     curator: Curator
     meta_step_sizes: Optional[MetaStepSizeLearner] = None
     planning_budget: int = 4
     feature_budget: int = 4
     option_stop_threshold: float = 0.5
-    active_option: Optional[Option[StateT, ActT]] = None
+    active_option: Optional[Option[SubjectiveStateT, ActT]] = None
     last_action: Optional[ActT] = None
-    last_state: Optional[StateT] = None
+    last_subjective_state: Optional[SubjectiveStateT] = None
     last_observation: Optional[ObsT] = None
 
     def reset(self) -> None:
-        """Clear transient execution state."""
+        """Clear transient execution memory."""
         self.perception.reset()
         self.active_option = None
         self.last_action = None
-        self.last_state = None
+        self.last_subjective_state = None
         self.last_observation = None
 
-    def step(self, time_step: TimeStep[ObsT, InfoT]) -> AgentStepResult[ActT, StateT]:
+    def step(
+        self, time_step: TimeStep[ObsT, InfoT]
+    ) -> AgentStepResult[ActT, SubjectiveStateT]:
         """Run one temporally uniform agent step."""
-        state = self.perception.update(
+        subjective_state = self.perception.update(
             observation=time_step.observation,
             reward=time_step.reward,
             last_action=self.last_action,
@@ -110,12 +112,12 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
         planning_update: Optional[PlanningUpdate[ActT]] = None
         curation_decision: Optional[CurationDecision] = None
 
-        if self.last_state is not None and self.last_action is not None:
+        if self.last_subjective_state is not None and self.last_action is not None:
             transition = Transition(
-                state=self.last_state,
+                subjective_state=self.last_subjective_state,
                 action=self.last_action,
                 reward=time_step.reward,
-                next_state=state,
+                next_subjective_state=subjective_state,
                 observation=self.last_observation,
                 next_observation=time_step.observation,
                 terminated=time_step.terminated or time_step.truncated,
@@ -124,7 +126,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
             self._update_from_transition(transition)
 
         candidates = self.feature_constructor.propose(
-            state,
+            subjective_state,
             self.feature_bank.list_features(),
         )
         if candidates:
@@ -149,14 +151,14 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
         )
 
         planning_update = self.planner.plan_step(
-            state=state,
+            subjective_state=subjective_state,
             model=self.transition_model,
             value_function=self.value_function,
             budget=self.planning_budget,
         )
         self.reactive_policy.apply_planning_update(planning_update)
 
-        action, active_option_id = self._select_action(state)
+        action, active_option_id = self._select_action(subjective_state)
 
         usage_records = self._build_usage_records(ranked_feature_ids, active_option_id)
         if usage_records:
@@ -167,7 +169,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
             curation_decision = self.curator.curate(utility_scores)
             self._apply_curation(curation_decision)
 
-        self.last_state = state
+        self.last_subjective_state = subjective_state
         self.last_observation = time_step.observation
         self.last_action = action
 
@@ -176,7 +178,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
 
         return AgentStepResult(
             action=action,
-            state=state,
+            subjective_state=subjective_state,
             active_option_id=active_option_id,
             planning_update=planning_update,
             created_subtasks=created_subtasks,
@@ -185,12 +187,12 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
 
     def _update_from_transition(
         self,
-        transition: Transition[ObsT, ActT, StateT, InfoT],
+        transition: Transition[ObsT, ActT, SubjectiveStateT, InfoT],
     ) -> None:
         """Apply one observed transition to the learning subsystems."""
         td_errors = self.value_function.update(transition)
         self.reactive_policy.update_from_values(
-            transition.next_state,
+            transition.next_subjective_state,
             td_errors,
         )
         self.option_learner.update(transition)
@@ -206,20 +208,20 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
 
     def _select_action(
         self,
-        state: StateT,
+        subjective_state: SubjectiveStateT,
     ) -> tuple[ActT, Optional[OptionId]]:
         """Select a primitive action, continuing any active option if needed."""
         if self.active_option is not None:
-            stop_probability = self.active_option.stop_probability(state)
+            stop_probability = self.active_option.stop_probability(subjective_state)
             if stop_probability < self.option_stop_threshold:
                 return (
-                    self.active_option.act(state),
+                    self.active_option.act(subjective_state),
                     self.active_option.descriptor.option_id,
                 )
             self.active_option = None
 
         decision = self.reactive_policy.decide(
-            state=state,
+            subjective_state=subjective_state,
             active_option=None,
             available_options=self.option_library.list_options(),
         )
@@ -227,7 +229,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
         if decision.option_id is not None:
             self.active_option = self.option_library.get(decision.option_id)
             return (
-                self.active_option.act(state),
+                self.active_option.act(subjective_state),
                 self.active_option.descriptor.option_id,
             )
 
@@ -253,7 +255,7 @@ class OaKAgent(Generic[ObsT, ActT, StateT, InfoT]):
         return tuple(usage_records)
 
     def _apply_curation(self, decision: CurationDecision) -> None:
-        """Apply curator pruning decisions to the current agent state."""
+        """Apply curator pruning decisions to the current live agent fields."""
         if decision.drop_features:
             self.feature_bank.remove(decision.drop_features)
         if decision.drop_subtasks:

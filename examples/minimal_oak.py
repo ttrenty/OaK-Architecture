@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Bare-minimum runnable implementation used to smoke-test the interface.
+"""Bare-minimum external implementation used to smoke-test the interface.
 
 This module answers a single question: can the current package interfaces be
 instantiated and run through a complete OaK step loop?
@@ -9,10 +9,14 @@ The answer should remain "yes" even while the architecture is still under
 active development. That makes this module useful both as a tutorial and as a
 regression check for interface changes.
 
+Unlike the core package, this module lives outside `oak_architecture` on
+purpose. It demonstrates what it looks like for a downstream project to wire
+the published interfaces into a concrete agent.
+
 What this module is:
 
 - a tiny integer world
-- a direct observation-to-state perception module
+- a direct observation-to-subjective_state perception module
 - one simple feature, one subtask, and one trivial option
 - a no-op utility/curation setup
 
@@ -75,8 +79,8 @@ MinimalInfo: TypeAlias = dict[str, Any]
 
 
 @dataclass(slots=True, frozen=True)
-class MinimalState:
-    """Small concrete state used by the smoke implementation."""
+class MinimalSubjectiveState:
+    """Small concrete subjective state used by the smoke implementation."""
 
     step_index: int
     observation: Observation
@@ -107,34 +111,34 @@ class MinimalWorld(World[Observation, Action, MinimalInfo]):
         )
 
 
-class MinimalPerception(Perception[Observation, Action, MinimalState]):
-    """Converts each observation directly into a minimal state object."""
+class MinimalPerception(Perception[Observation, Action, MinimalSubjectiveState]):
+    """Converts each observation directly into a minimal subjective state object."""
 
     def __init__(self) -> None:
-        self._state = MinimalState(0, 0, 0.0, None)
+        self._subjective_state = MinimalSubjectiveState(0, 0, 0.0, None)
 
     def reset(self) -> None:
-        self._state = MinimalState(0, 0, 0.0, None)
+        self._subjective_state = MinimalSubjectiveState(0, 0, 0.0, None)
 
     def update(
         self,
         observation: Observation,
         reward: float,
         last_action: Optional[Action],
-    ) -> MinimalState:
-        self._state = MinimalState(
+    ) -> MinimalSubjectiveState:
+        self._subjective_state = MinimalSubjectiveState(
             step_index=observation,
             observation=observation,
             reward=reward,
             last_action=last_action,
         )
-        return self._state
+        return self._subjective_state
 
-    def current_state(self) -> MinimalState:
-        return self._state
+    def current_subjective_state(self) -> MinimalSubjectiveState:
+        return self._subjective_state
 
 
-class MinimalFeatureBank(FeatureBank[MinimalState]):
+class MinimalFeatureBank(FeatureBank[MinimalSubjectiveState]):
     """Holds one identity feature over the integer observation."""
 
     def __init__(self) -> None:
@@ -149,8 +153,10 @@ class MinimalFeatureBank(FeatureBank[MinimalState]):
     def list_features(self) -> Sequence[FeatureSpec]:
         return tuple(self._features.values())
 
-    def activations(self, state: MinimalState) -> Mapping[FeatureId, float]:
-        return {"observation": float(state.observation)}
+    def activations(
+        self, subjective_state: MinimalSubjectiveState
+    ) -> Mapping[FeatureId, float]:
+        return {"observation": float(subjective_state.observation)}
 
     def add_candidates(
         self,
@@ -173,12 +179,12 @@ class MinimalFeatureBank(FeatureBank[MinimalState]):
             self._features.pop(feature_id, None)
 
 
-class MinimalFeatureConstructor(FeatureConstructor[MinimalState]):
+class MinimalFeatureConstructor(FeatureConstructor[MinimalSubjectiveState]):
     """Returns no new features, keeping the example intentionally minimal."""
 
     def propose(
         self,
-        state: MinimalState,
+        subjective_state: MinimalSubjectiveState,
         active_features: Sequence[FeatureSpec],
     ) -> Sequence[FeatureCandidate]:
         return ()
@@ -197,7 +203,7 @@ class MinimalFeatureRanker(FeatureRanker):
         return tuple(feature_ids if limit is None else feature_ids[:limit])
 
 
-class MinimalSubtaskGenerator(SubtaskGenerator[MinimalState]):
+class MinimalSubtaskGenerator(SubtaskGenerator[MinimalSubjectiveState]):
     """Creates at most one subtask per feature."""
 
     def __init__(self) -> None:
@@ -206,7 +212,7 @@ class MinimalSubtaskGenerator(SubtaskGenerator[MinimalState]):
     def generate(
         self,
         ranked_feature_ids: Sequence[FeatureId],
-        feature_bank: FeatureBank[MinimalState],
+        feature_bank: FeatureBank[MinimalSubjectiveState],
     ) -> Sequence[SubtaskSpec]:
         created: list[SubtaskSpec] = []
         for feature_id in ranked_feature_ids:
@@ -223,7 +229,9 @@ class MinimalSubtaskGenerator(SubtaskGenerator[MinimalState]):
         return tuple(created)
 
 
-class MinimalGVFLearner(GVFLearner[MinimalState, Action, MinimalInfo]):
+class MinimalGVFLearner(
+    GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]
+):
     """Trivial GVF learner that stores only the latest reward."""
 
     def __init__(self, gvf_id: GVFId, name: str) -> None:
@@ -240,17 +248,24 @@ class MinimalGVFLearner(GVFLearner[MinimalState, Action, MinimalInfo]):
     def spec(self) -> GVFSpec:
         return self._spec
 
-    def predict(self, state: MinimalState, action: Optional[Action] = None) -> float:
+    def predict(
+        self,
+        subjective_state: MinimalSubjectiveState,
+        action: Optional[Action] = None,
+    ) -> float:
         return self._value
 
     def update(
-        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+        self,
+        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
     ) -> float:
         self._value = transition.reward
         return 0.0
 
 
-class MinimalValueFunction(ValueFunction[MinimalState, Action, MinimalInfo]):
+class MinimalValueFunction(
+    ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]
+):
     """Container for the main trivial GVF learner."""
 
     def __init__(self) -> None:
@@ -258,16 +273,22 @@ class MinimalValueFunction(ValueFunction[MinimalState, Action, MinimalInfo]):
             "main": MinimalGVFLearner("main", "Main reward")
         }
 
-    def list_gvfs(self) -> Sequence[GVFLearner[MinimalState, Action, MinimalInfo]]:
+    def list_gvfs(
+        self,
+    ) -> Sequence[GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]]:
         return tuple(self._learners.values())
 
-    def predict(self, state: MinimalState) -> Mapping[GVFId, float]:
+    def predict(
+        self, subjective_state: MinimalSubjectiveState
+    ) -> Mapping[GVFId, float]:
         return {
-            gvf_id: learner.predict(state) for gvf_id, learner in self._learners.items()
+            gvf_id: learner.predict(subjective_state)
+            for gvf_id, learner in self._learners.items()
         }
 
     def update(
-        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+        self,
+        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
     ) -> Mapping[GVFId, float]:
         return {
             gvf_id: learner.update(transition)
@@ -275,7 +296,7 @@ class MinimalValueFunction(ValueFunction[MinimalState, Action, MinimalInfo]):
         }
 
     def add_or_replace(
-        self, learner: GVFLearner[MinimalState, Action, MinimalInfo]
+        self, learner: GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]
     ) -> None:
         self._learners[learner.spec.gvf_id] = learner  # type: ignore[assignment]
 
@@ -285,7 +306,7 @@ class MinimalValueFunction(ValueFunction[MinimalState, Action, MinimalInfo]):
                 self._learners.pop(gvf_id, None)
 
 
-class MinimalOption(Option[MinimalState, Action]):
+class MinimalOption(Option[MinimalSubjectiveState, Action]):
     """Option that always emits the same primitive action."""
 
     def __init__(self, descriptor: OptionDescriptor, action: Action = 1) -> None:
@@ -296,29 +317,31 @@ class MinimalOption(Option[MinimalState, Action]):
     def descriptor(self) -> OptionDescriptor:
         return self._descriptor
 
-    def is_available(self, state: MinimalState) -> bool:
+    def is_available(self, subjective_state: MinimalSubjectiveState) -> bool:
         return True
 
-    def act(self, state: MinimalState) -> Action:
+    def act(self, subjective_state: MinimalSubjectiveState) -> Action:
         return self._action
 
-    def stop_probability(self, state: MinimalState) -> float:
+    def stop_probability(self, subjective_state: MinimalSubjectiveState) -> float:
         return 1.0
 
 
-class MinimalOptionLibrary(OptionLibrary[MinimalState, Action]):
+class MinimalOptionLibrary(OptionLibrary[MinimalSubjectiveState, Action]):
     """In-memory storage for smoke-test options."""
 
     def __init__(self) -> None:
-        self._options: dict[OptionId, Option[MinimalState, Action]] = {}
+        self._options: dict[OptionId, Option[MinimalSubjectiveState, Action]] = {}
 
-    def list_options(self) -> Sequence[Option[MinimalState, Action]]:
+    def list_options(self) -> Sequence[Option[MinimalSubjectiveState, Action]]:
         return tuple(self._options.values())
 
-    def get(self, option_id: OptionId) -> Option[MinimalState, Action]:
+    def get(self, option_id: OptionId) -> Option[MinimalSubjectiveState, Action]:
         return self._options[option_id]
 
-    def add_or_replace(self, option: Option[MinimalState, Action]) -> None:
+    def add_or_replace(
+        self, option: Option[MinimalSubjectiveState, Action]
+    ) -> None:
         self._options[option.descriptor.option_id] = option
 
     def remove(self, option_ids: Sequence[OptionId]) -> None:
@@ -326,7 +349,9 @@ class MinimalOptionLibrary(OptionLibrary[MinimalState, Action]):
             self._options.pop(option_id, None)
 
 
-class MinimalOptionLearner(OptionLearner[MinimalState, Action, MinimalInfo]):
+class MinimalOptionLearner(
+    OptionLearner[MinimalSubjectiveState, Action, MinimalInfo]
+):
     """Creates one trivial option per discovered subtask."""
 
     def __init__(self) -> None:
@@ -346,11 +371,12 @@ class MinimalOptionLearner(OptionLearner[MinimalState, Action, MinimalInfo]):
             )
 
     def update(
-        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+        self,
+        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
     ) -> None:
         return None
 
-    def export_options(self) -> Sequence[Option[MinimalState, Action]]:
+    def export_options(self) -> Sequence[Option[MinimalSubjectiveState, Action]]:
         return tuple(self._options.values())
 
     def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
@@ -359,7 +385,7 @@ class MinimalOptionLearner(OptionLearner[MinimalState, Action, MinimalInfo]):
             self._options.pop(f"option:{subtask_id}", None)
 
 
-class MinimalOptionModel(OptionModel[MinimalState]):
+class MinimalOptionModel(OptionModel[MinimalSubjectiveState]):
     """Option model that predicts no meaningful change."""
 
     def __init__(self, option_id: OptionId) -> None:
@@ -369,53 +395,63 @@ class MinimalOptionModel(OptionModel[MinimalState]):
     def option_id(self) -> OptionId:
         return self._option_id
 
-    def predict(self, state: MinimalState) -> ModelPrediction[MinimalState]:
+    def predict(
+        self, subjective_state: MinimalSubjectiveState
+    ) -> ModelPrediction[MinimalSubjectiveState]:
         return ModelPrediction(
-            predicted_state=state,
+            predicted_subjective_state=subjective_state,
             cumulative_reward=0.0,
             steps=1,
             terminated=False,
         )
 
 
-class MinimalOptionModelLearner(OptionModelLearner[MinimalState, Action, MinimalInfo]):
+class MinimalOptionModelLearner(
+    OptionModelLearner[MinimalSubjectiveState, Action, MinimalInfo]
+):
     """Wraps the smoke-test options in smoke-test models."""
 
     def __init__(self, option_learner: MinimalOptionLearner) -> None:
         self._option_learner = option_learner
 
     def update(
-        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+        self,
+        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
     ) -> None:
         return None
 
-    def export_models(self) -> Sequence[OptionModel[MinimalState]]:
+    def export_models(self) -> Sequence[OptionModel[MinimalSubjectiveState]]:
         return tuple(
             MinimalOptionModel(option.descriptor.option_id)
             for option in self._option_learner.export_options()
         )
 
 
-class MinimalTransitionModel(TransitionModel[MinimalState, Action, MinimalInfo]):
+class MinimalTransitionModel(
+    TransitionModel[MinimalSubjectiveState, Action, MinimalInfo]
+):
     """Very small predictive model used only to exercise planner calls."""
 
     def __init__(self) -> None:
-        self._option_models: dict[OptionId, OptionModel[MinimalState]] = {}
+        self._option_models: dict[
+            OptionId, OptionModel[MinimalSubjectiveState]
+        ] = {}
 
     def update(
-        self, transition: Transition[Any, Action, MinimalState, MinimalInfo]
+        self,
+        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
     ) -> None:
         return None
 
     def predict_action(
         self,
-        state: MinimalState,
+        subjective_state: MinimalSubjectiveState,
         action: Action,
-    ) -> ModelPrediction[MinimalState]:
+    ) -> ModelPrediction[MinimalSubjectiveState]:
         return ModelPrediction(
-            predicted_state=MinimalState(
-                step_index=state.step_index + 1,
-                observation=state.observation + 1,
+            predicted_subjective_state=MinimalSubjectiveState(
+                step_index=subjective_state.step_index + 1,
+                observation=subjective_state.observation + 1,
                 reward=1.0 if action == 1 else 0.0,
                 last_action=action,
             ),
@@ -426,14 +462,14 @@ class MinimalTransitionModel(TransitionModel[MinimalState, Action, MinimalInfo])
 
     def predict_option(
         self,
-        state: MinimalState,
+        subjective_state: MinimalSubjectiveState,
         option_id: OptionId,
-    ) -> ModelPrediction[MinimalState]:
+    ) -> ModelPrediction[MinimalSubjectiveState]:
         model = self._option_models.get(option_id)
         if model is not None:
-            return model.predict(state)
+            return model.predict(subjective_state)
         return ModelPrediction(
-            predicted_state=state,
+            predicted_subjective_state=subjective_state,
             cumulative_reward=0.0,
             steps=1,
             terminated=False,
@@ -441,7 +477,7 @@ class MinimalTransitionModel(TransitionModel[MinimalState, Action, MinimalInfo])
 
     def add_or_replace_option_models(
         self,
-        models: Sequence[OptionModel[MinimalState]],
+        models: Sequence[OptionModel[MinimalSubjectiveState]],
     ) -> None:
         for model in models:
             self._option_models[model.option_id] = model
@@ -451,25 +487,27 @@ class MinimalTransitionModel(TransitionModel[MinimalState, Action, MinimalInfo])
             self._option_models.pop(option_id, None)
 
 
-class MinimalPlanner(Planner[MinimalState, Action, MinimalInfo]):
+class MinimalPlanner(Planner[MinimalSubjectiveState, Action, MinimalInfo]):
     """Consumes the transition model once and returns a tiny planning update."""
 
     def plan_step(
         self,
-        state: MinimalState,
-        model: TransitionModel[MinimalState, Action, MinimalInfo],
-        value_function: ValueFunction[MinimalState, Action, MinimalInfo],
+        subjective_state: MinimalSubjectiveState,
+        model: TransitionModel[MinimalSubjectiveState, Action, MinimalInfo],
+        value_function: ValueFunction[MinimalSubjectiveState, Action, MinimalInfo],
         budget: int,
     ) -> PlanningUpdate[Action]:
-        _ = model.predict_action(state, 0)
+        _ = model.predict_action(subjective_state, 0)
         return PlanningUpdate(
-            value_targets=value_function.predict(state),
+            value_targets=value_function.predict(subjective_state),
             policy_targets={"preferred_action": 0},
             search_statistics={"budget_used": budget},
         )
 
 
-class MinimalReactivePolicy(ReactivePolicy[MinimalState, Action]):
+class MinimalReactivePolicy(
+    ReactivePolicy[MinimalSubjectiveState, Action]
+):
     """Alternates between primitive actions and the first available option."""
 
     def __init__(self) -> None:
@@ -478,11 +516,11 @@ class MinimalReactivePolicy(ReactivePolicy[MinimalState, Action]):
 
     def decide(
         self,
-        state: MinimalState,
-        active_option: Optional[Option[MinimalState, Action]],
-        available_options: Sequence[Option[MinimalState, Action]],
+        subjective_state: MinimalSubjectiveState,
+        active_option: Optional[Option[MinimalSubjectiveState, Action]],
+        available_options: Sequence[Option[MinimalSubjectiveState, Action]],
     ) -> PolicyDecision[Action]:
-        if state.observation % 2 == 0:
+        if subjective_state.observation % 2 == 0:
             return PolicyDecision(action=0)
         if available_options:
             return PolicyDecision(option_id=available_options[0].descriptor.option_id)
@@ -490,7 +528,7 @@ class MinimalReactivePolicy(ReactivePolicy[MinimalState, Action]):
 
     def update_from_values(
         self,
-        state: MinimalState,
+        subjective_state: MinimalSubjectiveState,
         td_errors: Mapping[GVFId, float],
     ) -> None:
         self.last_td_errors = dict(td_errors)
@@ -545,7 +583,8 @@ class MinimalMetaStepSizeLearner(MetaStepSizeLearner):
         return self._store.get(component_id, {})
 
 
-def build_minimal_agent() -> OaKAgent[Observation, Action, MinimalState, MinimalInfo]:
+def build_minimal_agent(
+) -> OaKAgent[Observation, Action, MinimalSubjectiveState, MinimalInfo]:
     """Construct a fully wired smoke-test OaK agent."""
     option_learner = MinimalOptionLearner()
     return OaKAgent(
@@ -582,7 +621,7 @@ def run_minimal_episode(horizon: int = 5) -> list[dict[str, Any]]:
         action = result.action
         trace.append(
             {
-                "state": result.state,
+                "subjective_state": result.subjective_state,
                 "action": action,
                 "active_option_id": result.active_option_id,
                 "created_subtasks": [

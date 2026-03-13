@@ -1,24 +1,40 @@
 @startuml
-title OaK high-level four-block view
+title OaKAgent.step(...): compressed control path
 
+left to right direction
 skinparam componentStyle rectangle
+skinparam shadowing false
 
-actor World as W
+actor caller
 
-[Perception] as Perception
-[State] as State
-[Reactive Policy] as ReactivePolicy
-[Value Function] as ValueFunction
-[Transition Model] as TransitionModel
+artifact time_step
+artifact subjective_state
+artifact transition
+artifact planning_update
+artifact action
 
-W --> Perception : observation, reward, last action
-Perception --> State : produces
-State --> ReactivePolicy : current state
-State --> ValueFunction : current state
-State --> TransitionModel : current state
-ReactivePolicy --> W : action
-ValueFunction ..> ReactivePolicy : learning signal
-TransitionModel ..> ReactivePolicy : planning signal
-TransitionModel ..> ValueFunction : predicted consequences
+[perception] as perception
+[value_function] as value_function
+[transition_model] as transition_model
+[planner] as planner
+[reactive_policy] as reactive_policy
+
+caller --> time_step
+time_step --> perception : observation, reward,\nlast action
+perception --> subjective_state : current state estimate
+
+transition --> value_function : update
+transition --> transition_model : update
+
+subjective_state --> planner : planning start state
+transition_model --> planner : model queries
+value_function --> planner : bootstrap values
+planner --> planning_update : plan result
+
+planning_update --> reactive_policy : planning advice
+subjective_state --> reactive_policy : decision context
+value_function --> reactive_policy : value feedback
+reactive_policy --> action : choose action
+action --> caller : AgentStepResult.action
 
 @enduml

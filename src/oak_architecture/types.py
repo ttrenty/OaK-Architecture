@@ -16,7 +16,7 @@ The most important objects are:
 - `AgentStepResult`
   The externally visible result of one `OaKAgent.step(...)` call.
 
-In practice, most projects start by making `StateT` concrete, then choosing a
+In practice, most projects start by making `SubjectiveStateT` concrete, then choosing a
 small `ObsT`, `ActT`, and `InfoT` that match their environment wrapper.
 """
 
@@ -35,8 +35,8 @@ from typing import (
 
 ObsT = TypeVar("ObsT")
 ActT = TypeVar("ActT")
-# StateT is the agent's learned internal state summary.
-StateT = TypeVar("StateT")
+# SubjectiveStateT is the agent's learned internal subjective state summary.
+SubjectiveStateT = TypeVar("SubjectiveStateT")
 InfoT = TypeVar("InfoT", bound=Mapping[str, Any])
 
 FeatureId: TypeAlias = str
@@ -77,18 +77,18 @@ class TimeStep(Generic[ObsT, InfoT]):
 
 
 @dataclass(slots=True, frozen=True)
-class Transition(Generic[ObsT, ActT, StateT, InfoT]):
-    """One state transition in agent terms.
+class Transition(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
+    """One subjective-state transition in agent terms.
 
     `Transition` is constructed by the agent after two consecutive time steps.
     Learners use it instead of the raw world stream so they can access both the
-    previous and next state representations.
+    previous and next subjective state representations.
     """
 
-    state: StateT
+    subjective_state: SubjectiveStateT
     action: ActT
     reward: float
-    next_state: StateT
+    next_subjective_state: SubjectiveStateT
     observation: Optional[ObsT] = None
     next_observation: Optional[ObsT] = None
     terminated: bool = False
@@ -173,10 +173,10 @@ class PolicyDecision(Generic[ActT]):
 
 
 @dataclass(slots=True, frozen=True)
-class ModelPrediction(Generic[StateT]):
+class ModelPrediction(Generic[SubjectiveStateT]):
     """Prediction returned by an action or option model."""
 
-    predicted_state: StateT
+    predicted_subjective_state: SubjectiveStateT
     cumulative_reward: float
     steps: Optional[int] = None
     terminated: bool = False
@@ -225,16 +225,16 @@ class CurationDecision:
 
 
 @dataclass(slots=True, frozen=True)
-class AgentStepResult(Generic[ActT, StateT]):
+class AgentStepResult(Generic[ActT, SubjectiveStateT]):
     """Observable result of one OaK agent step.
 
     This is the compact object a caller receives after stepping the agent. It
-    includes the primitive action actually executed, the current state, and any
-    structures or planning signals created during that step.
+    includes the primitive action actually executed, the current subjective
+    state, and any structures or planning signals created during that step.
     """
 
     action: ActT
-    state: StateT
+    subjective_state: SubjectiveStateT
     active_option_id: Optional[OptionId] = None
     planning_update: Optional[PlanningUpdate[ActT]] = None
     created_subtasks: Sequence[SubtaskSpec] = field(default_factory=tuple)
