@@ -37,7 +37,7 @@ from oak_architecture.interfaces import (
     FeatureBank,
     FeatureConstructor,
     FeatureRanker,
-    GVFLearner,
+    GeneralValueFunctionLearner,
     MetaStepSizeLearner,
     Option,
     OptionLearner,
@@ -58,8 +58,8 @@ from oak_architecture.types import (
     FeatureCandidate,
     FeatureId,
     FeatureSpec,
-    GVFId,
-    GVFSpec,
+    GeneralValueFunctionId,
+    GeneralValueFunctionSpec,
     ModelPrediction,
     OptionDescriptor,
     OptionId,
@@ -229,14 +229,16 @@ class MinimalSubtaskGenerator(SubtaskGenerator[MinimalSubjectiveState]):
         return tuple(created)
 
 
-class MinimalGVFLearner(
-    GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]
+class MinimalGeneralValueFunctionLearner(
+    GeneralValueFunctionLearner[MinimalSubjectiveState, Action, MinimalInfo]
 ):
-    """Trivial GVF learner that stores only the latest reward."""
+    """Trivial GeneralValueFunction learner that stores only the latest reward."""
 
-    def __init__(self, gvf_id: GVFId, name: str) -> None:
-        self._spec = GVFSpec(
-            gvf_id=gvf_id,
+    def __init__(
+        self, general_value_function_id: GeneralValueFunctionId, name: str
+    ) -> None:
+        self._spec = GeneralValueFunctionSpec(
+            general_value_function_id=general_value_function_id,
             name=name,
             cumulant=lambda transition: transition.reward,
             continuation=lambda transition: 0.0 if transition.terminated else 1.0,
@@ -245,7 +247,7 @@ class MinimalGVFLearner(
         self._value = 0.0
 
     @property
-    def spec(self) -> GVFSpec:
+    def spec(self) -> GeneralValueFunctionSpec:
         return self._spec
 
     def predict(
@@ -263,47 +265,52 @@ class MinimalGVFLearner(
         return 0.0
 
 
-class MinimalValueFunction(
-    ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]
-):
-    """Container for the main trivial GVF learner."""
+class MinimalValueFunction(ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]):
+    """Container for the main trivial GeneralValueFunction learner."""
 
     def __init__(self) -> None:
-        self._learners: dict[GVFId, MinimalGVFLearner] = {
-            "main": MinimalGVFLearner("main", "Main reward")
-        }
+        self._learners: dict[
+            GeneralValueFunctionId, MinimalGeneralValueFunctionLearner
+        ] = {"main": MinimalGeneralValueFunctionLearner("main", "Main reward")}
 
-    def list_gvfs(
+    def list_general_value_functions(
         self,
-    ) -> Sequence[GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]]:
+    ) -> Sequence[
+        GeneralValueFunctionLearner[MinimalSubjectiveState, Action, MinimalInfo]
+    ]:
         return tuple(self._learners.values())
 
     def predict(
         self, subjective_state: MinimalSubjectiveState
-    ) -> Mapping[GVFId, float]:
+    ) -> Mapping[GeneralValueFunctionId, float]:
         return {
-            gvf_id: learner.predict(subjective_state)
-            for gvf_id, learner in self._learners.items()
+            general_value_function_id: learner.predict(subjective_state)
+            for general_value_function_id, learner in self._learners.items()
         }
 
     def update(
         self,
         transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> Mapping[GVFId, float]:
+    ) -> Mapping[GeneralValueFunctionId, float]:
         return {
-            gvf_id: learner.update(transition)
-            for gvf_id, learner in self._learners.items()
+            general_value_function_id: learner.update(transition)
+            for general_value_function_id, learner in self._learners.items()
         }
 
     def add_or_replace(
-        self, learner: GVFLearner[MinimalSubjectiveState, Action, MinimalInfo]
+        self,
+        learner: GeneralValueFunctionLearner[
+            MinimalSubjectiveState, Action, MinimalInfo
+        ],
     ) -> None:
-        self._learners[learner.spec.gvf_id] = learner  # type: ignore[assignment]
+        self._learners[learner.spec.general_value_function_id] = learner  # type: ignore[assignment]
 
-    def remove(self, gvf_ids: Sequence[GVFId]) -> None:
-        for gvf_id in gvf_ids:
-            if gvf_id != "main":
-                self._learners.pop(gvf_id, None)
+    def remove(
+        self, general_value_function_ids: Sequence[GeneralValueFunctionId]
+    ) -> None:
+        for general_value_function_id in general_value_function_ids:
+            if general_value_function_id != "main":
+                self._learners.pop(general_value_function_id, None)
 
 
 class MinimalOption(Option[MinimalSubjectiveState, Action]):
@@ -339,9 +346,7 @@ class MinimalOptionLibrary(OptionLibrary[MinimalSubjectiveState, Action]):
     def get(self, option_id: OptionId) -> Option[MinimalSubjectiveState, Action]:
         return self._options[option_id]
 
-    def add_or_replace(
-        self, option: Option[MinimalSubjectiveState, Action]
-    ) -> None:
+    def add_or_replace(self, option: Option[MinimalSubjectiveState, Action]) -> None:
         self._options[option.descriptor.option_id] = option
 
     def remove(self, option_ids: Sequence[OptionId]) -> None:
@@ -349,9 +354,7 @@ class MinimalOptionLibrary(OptionLibrary[MinimalSubjectiveState, Action]):
             self._options.pop(option_id, None)
 
 
-class MinimalOptionLearner(
-    OptionLearner[MinimalSubjectiveState, Action, MinimalInfo]
-):
+class MinimalOptionLearner(OptionLearner[MinimalSubjectiveState, Action, MinimalInfo]):
     """Creates one trivial option per discovered subtask."""
 
     def __init__(self) -> None:
@@ -433,9 +436,7 @@ class MinimalTransitionModel(
     """Very small predictive model used only to exercise planner calls."""
 
     def __init__(self) -> None:
-        self._option_models: dict[
-            OptionId, OptionModel[MinimalSubjectiveState]
-        ] = {}
+        self._option_models: dict[OptionId, OptionModel[MinimalSubjectiveState]] = {}
 
     def update(
         self,
@@ -505,13 +506,11 @@ class MinimalPlanner(Planner[MinimalSubjectiveState, Action, MinimalInfo]):
         )
 
 
-class MinimalReactivePolicy(
-    ReactivePolicy[MinimalSubjectiveState, Action]
-):
+class MinimalReactivePolicy(ReactivePolicy[MinimalSubjectiveState, Action]):
     """Alternates between primitive actions and the first available option."""
 
     def __init__(self) -> None:
-        self.last_td_errors: Mapping[GVFId, float] = {}
+        self.last_td_errors: Mapping[GeneralValueFunctionId, float] = {}
         self.last_planning_update: Optional[PlanningUpdate[Action]] = None
 
     def decide(
@@ -529,7 +528,7 @@ class MinimalReactivePolicy(
     def update_from_values(
         self,
         subjective_state: MinimalSubjectiveState,
-        td_errors: Mapping[GVFId, float],
+        td_errors: Mapping[GeneralValueFunctionId, float],
     ) -> None:
         self.last_td_errors = dict(td_errors)
 
@@ -583,8 +582,9 @@ class MinimalMetaStepSizeLearner(MetaStepSizeLearner):
         return self._store.get(component_id, {})
 
 
-def build_minimal_agent(
-) -> OaKAgent[Observation, Action, MinimalSubjectiveState, MinimalInfo]:
+def build_minimal_agent() -> (
+    OaKAgent[Observation, Action, MinimalSubjectiveState, MinimalInfo]
+):
     """Construct a fully wired smoke-test OaK agent."""
     option_learner = MinimalOptionLearner()
     return OaKAgent(

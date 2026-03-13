@@ -40,13 +40,13 @@ from .interfaces import (
     ValueFunction,
 )
 from .types import (
-    ActT,
+    ActionT,
     AgentStepResult,
     ComponentKind,
     CurationDecision,
     FeatureId,
     InfoT,
-    ObsT,
+    ObservationT,
     OptionId,
     PlanningUpdate,
     SubjectiveStateT,
@@ -58,7 +58,7 @@ from .types import (
 
 
 @dataclass
-class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
+class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
     """Coordinates one full OaK step across all registered components.
 
     The agent is deliberately interface-first. It is best understood as a
@@ -66,28 +66,28 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
     ensures they are invoked in a consistent order.
     """
 
-    perception: Perception[ObsT, ActT, SubjectiveStateT]
+    perception: Perception[ObservationT, ActionT, SubjectiveStateT]
     feature_bank: FeatureBank[SubjectiveStateT]
     feature_constructor: FeatureConstructor[SubjectiveStateT]
     feature_ranker: FeatureRanker
     subtask_generator: SubtaskGenerator[SubjectiveStateT]
-    value_function: ValueFunction[SubjectiveStateT, ActT, InfoT]
-    reactive_policy: ReactivePolicy[SubjectiveStateT, ActT]
-    option_library: OptionLibrary[SubjectiveStateT, ActT]
-    option_learner: OptionLearner[SubjectiveStateT, ActT, InfoT]
-    option_model_learner: OptionModelLearner[SubjectiveStateT, ActT, InfoT]
-    transition_model: TransitionModel[SubjectiveStateT, ActT, InfoT]
-    planner: Planner[SubjectiveStateT, ActT, InfoT]
+    value_function: ValueFunction[SubjectiveStateT, ActionT, InfoT]
+    reactive_policy: ReactivePolicy[SubjectiveStateT, ActionT]
+    option_library: OptionLibrary[SubjectiveStateT, ActionT]
+    option_learner: OptionLearner[SubjectiveStateT, ActionT, InfoT]
+    option_model_learner: OptionModelLearner[SubjectiveStateT, ActionT, InfoT]
+    transition_model: TransitionModel[SubjectiveStateT, ActionT, InfoT]
+    planner: Planner[SubjectiveStateT, ActionT, InfoT]
     utility_assessor: UtilityAssessor
     curator: Curator
     meta_step_sizes: Optional[MetaStepSizeLearner] = None
     planning_budget: int = 4
     feature_budget: int = 4
     option_stop_threshold: float = 0.5
-    active_option: Optional[Option[SubjectiveStateT, ActT]] = None
-    last_action: Optional[ActT] = None
+    active_option: Optional[Option[SubjectiveStateT, ActionT]] = None
+    last_action: Optional[ActionT] = None
     last_subjective_state: Optional[SubjectiveStateT] = None
-    last_observation: Optional[ObsT] = None
+    last_observation: Optional[ObservationT] = None
 
     def reset(self) -> None:
         """Clear transient execution memory."""
@@ -98,8 +98,8 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
         self.last_observation = None
 
     def step(
-        self, time_step: TimeStep[ObsT, InfoT]
-    ) -> AgentStepResult[ActT, SubjectiveStateT]:
+        self, time_step: TimeStep[ObservationT, InfoT]
+    ) -> AgentStepResult[ActionT, SubjectiveStateT]:
         """Run one temporally uniform agent step."""
         subjective_state = self.perception.update(
             observation=time_step.observation,
@@ -109,7 +109,7 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
 
         created_subtasks: Sequence[SubtaskSpec] = ()
         ranked_feature_ids: Sequence[FeatureId] = ()
-        planning_update: Optional[PlanningUpdate[ActT]] = None
+        planning_update: Optional[PlanningUpdate[ActionT]] = None
         curation_decision: Optional[CurationDecision] = None
 
         if self.last_subjective_state is not None and self.last_action is not None:
@@ -187,7 +187,7 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
 
     def _update_from_transition(
         self,
-        transition: Transition[ObsT, ActT, SubjectiveStateT, InfoT],
+        transition: Transition[ObservationT, ActionT, SubjectiveStateT, InfoT],
     ) -> None:
         """Apply one observed transition to the learning subsystems."""
         td_errors = self.value_function.update(transition)
@@ -209,7 +209,7 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
     def _select_action(
         self,
         subjective_state: SubjectiveStateT,
-    ) -> tuple[ActT, Optional[OptionId]]:
+    ) -> tuple[ActionT, Optional[OptionId]]:
         """Select a primitive action, continuing any active option if needed."""
         if self.active_option is not None:
             stop_probability = self.active_option.stop_probability(subjective_state)
@@ -269,5 +269,5 @@ class OaKAgent(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
                 self.active_option = None
         if decision.drop_option_models:
             self.transition_model.remove_option_models(decision.drop_option_models)
-        if decision.drop_gvfs:
-            self.value_function.remove(decision.drop_gvfs)
+        if decision.drop_general_value_functions:
+            self.value_function.remove(decision.drop_general_value_functions)
