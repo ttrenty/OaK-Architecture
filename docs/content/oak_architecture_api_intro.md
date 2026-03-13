@@ -218,7 +218,7 @@ of code in `OaKAgent.step(...)`.
 18. `curation_decision = self.curator.curate(utility_scores)`
     `curator` decides what should be dropped. `self._apply_curation(...)`
     applies that decision by removing features, subtasks, options, option
-    models, and GVFs from the live agent fields.
+    models, and GeneralValueFunctions from the live agent fields.
 19. `self.last_subjective_state = subjective_state`,
     `self.last_observation = ...`, `self.last_action = action`
     These assignments update the memory that will be needed to build the next
@@ -327,7 +327,7 @@ ones:
 - `ReactivePolicy` should stay focused on choosing between primitive actions
   and options. It should not absorb the work of planning or prediction.
 - `ValueFunction` should start with one meaningful predictive target before you
-  expand to many GVFs or auxiliaries.
+  expand to many GeneralValueFunctions or auxiliaries.
 - `TransitionModel` should make honest predictions. Bounded planning becomes
   misleading quickly if the model invents certainty it does not have.
 - `UtilityAssessor` and `Curator` should stay conservative until you have

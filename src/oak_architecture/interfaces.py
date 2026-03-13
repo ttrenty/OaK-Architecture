@@ -28,17 +28,17 @@ from typing import (
 )
 
 from .types import (
-    ActT,
+    ActionT,
     ComponentId,
     CurationDecision,
     FeatureCandidate,
     FeatureId,
     FeatureSpec,
-    GVFId,
-    GVFSpec,
+    GeneralValueFunctionId,
+    GeneralValueFunctionSpec,
     InfoT,
     ModelPrediction,
-    ObsT,
+    ObservationT,
     OptionDescriptor,
     OptionId,
     PlanningUpdate,
@@ -54,7 +54,7 @@ from .types import (
 
 
 @runtime_checkable
-class World(Protocol[ObsT, ActT, InfoT]):
+class World(Protocol[ObservationT, ActionT, InfoT]):
     """Minimal environment protocol used by the agent.
 
     A `World` may wrap a simulator, a benchmark environment, or a custom
@@ -62,12 +62,12 @@ class World(Protocol[ObsT, ActT, InfoT]):
     does not depend on a specific environment library.
     """
 
-    def reset(self) -> TimeStep[ObsT, InfoT]: ...
+    def reset(self) -> TimeStep[ObservationT, InfoT]: ...
 
-    def step(self, action: ActT) -> TimeStep[ObsT, InfoT]: ...
+    def step(self, action: ActionT) -> TimeStep[ObservationT, InfoT]: ...
 
 
-class Perception(ABC, Generic[ObsT, ActT, SubjectiveStateT]):
+class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
     """Builds and updates the subjective state seen by the other OaK blocks.
 
     This is where an implementation decides what `subjective_state` means. For a simple
@@ -82,9 +82,9 @@ class Perception(ABC, Generic[ObsT, ActT, SubjectiveStateT]):
     @abstractmethod
     def update(
         self,
-        observation: ObsT,
+        observation: ObservationT,
         reward: float,
-        last_action: Optional[ActT],
+        last_action: Optional[ActionT],
     ) -> SubjectiveStateT:
         raise NotImplementedError
 
@@ -155,62 +155,68 @@ class SubtaskGenerator(ABC, Generic[SubjectiveStateT]):
         raise NotImplementedError
 
 
-class GVFLearner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
-    """Learns one GVF online."""
+class GeneralValueFunctionLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
+    """Learns one GeneralValueFunction online."""
 
     @property
     @abstractmethod
-    def spec(self) -> GVFSpec:
+    def spec(self) -> GeneralValueFunctionSpec:
         raise NotImplementedError
 
     @abstractmethod
     def predict(
         self,
         subjective_state: SubjectiveStateT,
-        action: Optional[ActT] = None,
+        action: Optional[ActionT] = None,
     ) -> float:
         raise NotImplementedError
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, SubjectiveStateT, InfoT]
+        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
     ) -> float:
         raise NotImplementedError
 
 
-class ValueFunction(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
+class ValueFunction(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Owns the main and auxiliary value learners.
 
     A minimal implementation can expose a single predictive learner. A richer
-    implementation can maintain a bank of GVFs or related predictive signals.
+    implementation can maintain a bank of GeneralValueFunctions or related predictive signals.
     """
 
     @abstractmethod
-    def list_gvfs(self) -> Sequence[GVFLearner[SubjectiveStateT, ActT, InfoT]]:
+    def list_general_value_functions(
+        self,
+    ) -> Sequence[GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]]:
         raise NotImplementedError
 
     @abstractmethod
-    def predict(self, subjective_state: SubjectiveStateT) -> Mapping[GVFId, float]:
+    def predict(
+        self, subjective_state: SubjectiveStateT
+    ) -> Mapping[GeneralValueFunctionId, float]:
         raise NotImplementedError
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, SubjectiveStateT, InfoT]
-    ) -> Mapping[GVFId, float]:
+        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
+    ) -> Mapping[GeneralValueFunctionId, float]:
         raise NotImplementedError
 
     @abstractmethod
     def add_or_replace(
-        self, learner: GVFLearner[SubjectiveStateT, ActT, InfoT]
+        self, learner: GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def remove(self, gvf_ids: Sequence[GVFId]) -> None:
+    def remove(
+        self, general_value_function_ids: Sequence[GeneralValueFunctionId]
+    ) -> None:
         raise NotImplementedError
 
 
-class Option(ABC, Generic[SubjectiveStateT, ActT]):
+class Option(ABC, Generic[SubjectiveStateT, ActionT]):
     """Temporal abstraction consisting of policy and termination."""
 
     @property
@@ -223,7 +229,7 @@ class Option(ABC, Generic[SubjectiveStateT, ActT]):
         raise NotImplementedError
 
     @abstractmethod
-    def act(self, subjective_state: SubjectiveStateT) -> ActT:
+    def act(self, subjective_state: SubjectiveStateT) -> ActionT:
         raise NotImplementedError
 
     @abstractmethod
@@ -231,19 +237,19 @@ class Option(ABC, Generic[SubjectiveStateT, ActT]):
         raise NotImplementedError
 
 
-class OptionLibrary(ABC, Generic[SubjectiveStateT, ActT]):
+class OptionLibrary(ABC, Generic[SubjectiveStateT, ActionT]):
     """Stores learned options."""
 
     @abstractmethod
-    def list_options(self) -> Sequence[Option[SubjectiveStateT, ActT]]:
+    def list_options(self) -> Sequence[Option[SubjectiveStateT, ActionT]]:
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, option_id: OptionId) -> Option[SubjectiveStateT, ActT]:
+    def get(self, option_id: OptionId) -> Option[SubjectiveStateT, ActionT]:
         raise NotImplementedError
 
     @abstractmethod
-    def add_or_replace(self, option: Option[SubjectiveStateT, ActT]) -> None:
+    def add_or_replace(self, option: Option[SubjectiveStateT, ActionT]) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -251,7 +257,7 @@ class OptionLibrary(ABC, Generic[SubjectiveStateT, ActT]):
         raise NotImplementedError
 
 
-class OptionLearner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
+class OptionLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Learns options from subtasks and experience."""
 
     @abstractmethod
@@ -260,12 +266,12 @@ class OptionLearner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, SubjectiveStateT, InfoT]
+        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def export_options(self) -> Sequence[Option[SubjectiveStateT, ActT]]:
+    def export_options(self) -> Sequence[Option[SubjectiveStateT, ActionT]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -289,12 +295,12 @@ class OptionModel(ABC, Generic[SubjectiveStateT]):
         raise NotImplementedError
 
 
-class OptionModelLearner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
+class OptionModelLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Learns option models from experience."""
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, SubjectiveStateT, InfoT]
+        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
     ) -> None:
         raise NotImplementedError
 
@@ -303,7 +309,7 @@ class OptionModelLearner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
         raise NotImplementedError
 
 
-class TransitionModel(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
+class TransitionModel(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Predictive world model for actions and options.
 
     This interface is the planner-facing model of what will happen next. It may
@@ -313,7 +319,7 @@ class TransitionModel(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActT, SubjectiveStateT, InfoT]
+        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
     ) -> None:
         raise NotImplementedError
 
@@ -321,7 +327,7 @@ class TransitionModel(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
     def predict_action(
         self,
         subjective_state: SubjectiveStateT,
-        action: ActT,
+        action: ActionT,
     ) -> ModelPrediction[SubjectiveStateT]:
         raise NotImplementedError
 
@@ -344,7 +350,7 @@ class TransitionModel(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
         raise NotImplementedError
 
 
-class Planner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
+class Planner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Produces planning updates from the transition model.
 
     The planner does not directly act in the world. Instead it returns
@@ -356,14 +362,14 @@ class Planner(ABC, Generic[SubjectiveStateT, ActT, InfoT]):
     def plan_step(
         self,
         subjective_state: SubjectiveStateT,
-        model: TransitionModel[SubjectiveStateT, ActT, InfoT],
-        value_function: ValueFunction[SubjectiveStateT, ActT, InfoT],
+        model: TransitionModel[SubjectiveStateT, ActionT, InfoT],
+        value_function: ValueFunction[SubjectiveStateT, ActionT, InfoT],
         budget: int,
-    ) -> PlanningUpdate[ActT]:
+    ) -> PlanningUpdate[ActionT]:
         raise NotImplementedError
 
 
-class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActT]):
+class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActionT]):
     """Chooses primitive actions or options from the current subjective state.
 
     This is the foreground action-selection mechanism. It may be as small as a
@@ -375,21 +381,21 @@ class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActT]):
     def decide(
         self,
         subjective_state: SubjectiveStateT,
-        active_option: Optional[Option[SubjectiveStateT, ActT]],
-        available_options: Sequence[Option[SubjectiveStateT, ActT]],
-    ) -> PolicyDecision[ActT]:
+        active_option: Optional[Option[SubjectiveStateT, ActionT]],
+        available_options: Sequence[Option[SubjectiveStateT, ActionT]],
+    ) -> PolicyDecision[ActionT]:
         raise NotImplementedError
 
     @abstractmethod
     def update_from_values(
         self,
         subjective_state: SubjectiveStateT,
-        td_errors: Mapping[GVFId, float],
+        td_errors: Mapping[GeneralValueFunctionId, float],
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def apply_planning_update(self, update: PlanningUpdate[ActT]) -> None:
+    def apply_planning_update(self, update: PlanningUpdate[ActionT]) -> None:
         raise NotImplementedError
 
 

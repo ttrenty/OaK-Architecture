@@ -17,7 +17,7 @@ The most important objects are:
   The externally visible result of one `OaKAgent.step(...)` call.
 
 In practice, most projects start by making `SubjectiveStateT` concrete, then choosing a
-small `ObsT`, `ActT`, and `InfoT` that match their environment wrapper.
+small `ObservationT`, `ActionT`, and `InfoT` that match their environment wrapper.
 """
 
 from dataclasses import dataclass, field
@@ -33,8 +33,8 @@ from typing import (
     TypeVar,
 )
 
-ObsT = TypeVar("ObsT")
-ActT = TypeVar("ActT")
+ObservationT = TypeVar("ObservationT")
+ActionT = TypeVar("ActionT")
 # SubjectiveStateT is the agent's learned internal subjective state summary.
 SubjectiveStateT = TypeVar("SubjectiveStateT")
 InfoT = TypeVar("InfoT", bound=Mapping[str, Any])
@@ -42,7 +42,7 @@ InfoT = TypeVar("InfoT", bound=Mapping[str, Any])
 FeatureId: TypeAlias = str
 SubtaskId: TypeAlias = str
 OptionId: TypeAlias = str
-GVFId: TypeAlias = str
+GeneralValueFunctionId: TypeAlias = str
 ComponentId: TypeAlias = str
 
 
@@ -61,7 +61,7 @@ class ComponentKind(str, Enum):
 
 
 @dataclass(slots=True, frozen=True)
-class TimeStep(Generic[ObsT, InfoT]):
+class TimeStep(Generic[ObservationT, InfoT]):
     """One environment emission seen by the agent.
 
     `TimeStep` is the object passed into `OaKAgent.step(...)`. It contains the
@@ -69,7 +69,7 @@ class TimeStep(Generic[ObsT, InfoT]):
     environment metadata.
     """
 
-    observation: ObsT
+    observation: ObservationT
     reward: float
     terminated: bool = False
     truncated: bool = False
@@ -77,7 +77,7 @@ class TimeStep(Generic[ObsT, InfoT]):
 
 
 @dataclass(slots=True, frozen=True)
-class Transition(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
+class Transition(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
     """One subjective-state transition in agent terms.
 
     `Transition` is constructed by the agent after two consecutive time steps.
@@ -86,11 +86,11 @@ class Transition(Generic[ObsT, ActT, SubjectiveStateT, InfoT]):
     """
 
     subjective_state: SubjectiveStateT
-    action: ActT
+    action: ActionT
     reward: float
     next_subjective_state: SubjectiveStateT
-    observation: Optional[ObsT] = None
-    next_observation: Optional[ObsT] = None
+    observation: Optional[ObservationT] = None
+    next_observation: Optional[ObservationT] = None
     terminated: bool = False
     info: Optional[InfoT] = None
 
@@ -122,10 +122,10 @@ class FeatureCandidate:
 
 
 @dataclass(slots=True, frozen=True)
-class GVFSpec:
+class GeneralValueFunctionSpec:
     """General value function specification."""
 
-    gvf_id: GVFId
+    general_value_function_id: GeneralValueFunctionId
     name: str
     cumulant: ScalarSignal
     continuation: ContinuationFn
@@ -141,7 +141,7 @@ class SubtaskSpec:
     name: str
     feature_id: FeatureId
     intensity: float = 1.0
-    gvf_id: Optional[GVFId] = None
+    general_value_function_id: Optional[GeneralValueFunctionId] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -156,10 +156,10 @@ class OptionDescriptor:
 
 
 @dataclass(slots=True, frozen=True)
-class PolicyDecision(Generic[ActT]):
+class PolicyDecision(Generic[ActionT]):
     """Return type for reactive policy selection."""
 
-    action: Optional[ActT] = None
+    action: Optional[ActionT] = None
     option_id: Optional[OptionId] = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
@@ -184,10 +184,10 @@ class ModelPrediction(Generic[SubjectiveStateT]):
 
 
 @dataclass(slots=True, frozen=True)
-class PlanningUpdate(Generic[ActT]):
+class PlanningUpdate(Generic[ActionT]):
     """Outputs from one planning pass."""
 
-    value_targets: Mapping[GVFId, float] = field(default_factory=dict)
+    value_targets: Mapping[GeneralValueFunctionId, float] = field(default_factory=dict)
     policy_targets: Mapping[str, Any] = field(default_factory=dict)
     search_statistics: Mapping[str, Any] = field(default_factory=dict)
 
@@ -220,12 +220,14 @@ class CurationDecision:
     drop_subtasks: Sequence[SubtaskId] = field(default_factory=tuple)
     drop_options: Sequence[OptionId] = field(default_factory=tuple)
     drop_option_models: Sequence[OptionId] = field(default_factory=tuple)
-    drop_gvfs: Sequence[GVFId] = field(default_factory=tuple)
+    drop_general_value_functions: Sequence[GeneralValueFunctionId] = field(
+        default_factory=tuple
+    )
     notes: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
-class AgentStepResult(Generic[ActT, SubjectiveStateT]):
+class AgentStepResult(Generic[ActionT, SubjectiveStateT]):
     """Observable result of one OaK agent step.
 
     This is the compact object a caller receives after stepping the agent. It
@@ -233,9 +235,9 @@ class AgentStepResult(Generic[ActT, SubjectiveStateT]):
     state, and any structures or planning signals created during that step.
     """
 
-    action: ActT
+    action: ActionT
     subjective_state: SubjectiveStateT
     active_option_id: Optional[OptionId] = None
-    planning_update: Optional[PlanningUpdate[ActT]] = None
+    planning_update: Optional[PlanningUpdate[ActionT]] = None
     created_subtasks: Sequence[SubtaskSpec] = field(default_factory=tuple)
     curation_decision: Optional[CurationDecision] = None
