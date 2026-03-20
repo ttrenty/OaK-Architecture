@@ -1,23 +1,9 @@
 from .agent import OaKAgent
+from . import fine_grained
 from .interfaces import (
-    Curator,
-    FeatureBank,
-    FeatureConstructor,
-    FeatureRanker,
-    GeneralValueFunctionLearner,
-    MetaStepSizeLearner,
-    Option,
-    OptionKeyboard,
-    OptionLearner,
-    OptionLibrary,
-    OptionModel,
-    OptionModelLearner,
     Perception,
-    Planner,
     ReactivePolicy,
-    SubtaskGenerator,
     TransitionModel,
-    UtilityAssessor,
     ValueFunction,
     World,
 )
@@ -40,40 +26,31 @@ from .types import (
 )
 
 __all__ = [
+    # ── The four main OaK interfaces ──
+    "Perception",
+    "TransitionModel",
+    "ValueFunction",
+    "ReactivePolicy",
+    # ── Agent ──
+    "OaKAgent",
+    # ── Environment ──
+    "World",
+    # ── Optional advanced assembly layer ──
+    "fine_grained",
+    # ── Shared types ──
     "AgentStepResult",
     "ComponentKind",
     "CurationDecision",
-    "Curator",
-    "FeatureBank",
     "FeatureCandidate",
-    "FeatureConstructor",
-    "FeatureRanker",
     "FeatureSpec",
-    "GeneralValueFunctionLearner",
     "GeneralValueFunctionSpec",
-    "MetaStepSizeLearner",
     "ModelPrediction",
-    "OaKAgent",
-    "Option",
     "OptionDescriptor",
-    "OptionKeyboard",
-    "OptionLearner",
-    "OptionLibrary",
-    "OptionModel",
-    "OptionModelLearner",
-    "Perception",
-    "Planner",
     "PlanningUpdate",
     "PolicyDecision",
-    "ReactivePolicy",
-    "SubtaskGenerator",
     "SubtaskSpec",
     "TimeStep",
     "Transition",
-    "TransitionModel",
     "UsageRecord",
-    "UtilityAssessor",
     "UtilityRecord",
-    "ValueFunction",
-    "World",
 ]

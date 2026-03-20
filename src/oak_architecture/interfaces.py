@@ -1,27 +1,30 @@
 from __future__ import annotations
 
-"""Abstract interfaces for the OaK architecture.
+"""The four main OaK interfaces.
 
-How to read this module:
+These correspond directly to the four modules in Richard Sutton's OaK
+architecture: Perception, Transition Model, Value Function, and Reactive
+Policy.
 
-1. Start with `World`, `Perception`, `ReactivePolicy`, `ValueFunction`, and
-   `TransitionModel`. These are the main runtime pieces.
-2. Then read the feature, subtask, option, and planning interfaces. These add
-   representational growth and temporal abstraction.
-3. Finish with `UtilityAssessor`, `Curator`, and `MetaStepSizeLearner`. These
-   capture the self-maintenance and adaptation machinery around the core agent.
+An `OaKAgent` is composed of exactly these four objects.  Each interface
+captures one of Sutton's architectural roles:
 
-The interfaces are intentionally split so a project can begin with a small
-continual-learning agent and only add planning, options, or curation once the
-core loop is working.
+- `Perception` — raw observations → subjective state, features, subtasks.
+- `ValueFunction` — value learning, utility assessment, curation.
+- `TransitionModel` — world dynamics, option models, planning.
+- `ReactivePolicy` — action selection, options, option learning.
+
+To build an OaK agent, implement these four interfaces and pass them to
+`OaKAgent`.  For finer-grained control, see
+`oak_architecture.fine_grained.components` for the building blocks and
+`oak_architecture.fine_grained.composites` for ready-made implementations
+that compose those building blocks into these four interfaces.
 """
 
 from abc import ABC, abstractmethod
 from typing import (
-    Any,
     Generic,
     Mapping,
-    Optional,
     Protocol,
     Sequence,
     runtime_checkable,
@@ -31,18 +34,13 @@ from .types import (
     ActionT,
     ComponentId,
     CurationDecision,
-    FeatureCandidate,
     FeatureId,
     FeatureSpec,
     GeneralValueFunctionId,
-    GeneralValueFunctionSpec,
     InfoT,
-    ModelPrediction,
     ObservationT,
-    OptionDescriptor,
     OptionId,
     PlanningUpdate,
-    PolicyDecision,
     SubjectiveStateT,
     SubtaskId,
     SubtaskSpec,
@@ -53,13 +51,18 @@ from .types import (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Environment protocol
+# ─────────────────────────────────────────────────────────────────────
+
+
 @runtime_checkable
 class World(Protocol[ObservationT, ActionT, InfoT]):
-    """Minimal environment protocol used by the agent.
+    """Minimal environment protocol.
 
     A `World` may wrap a simulator, a benchmark environment, or a custom
-    continual data source. The protocol is intentionally small so the package
-    does not depend on a specific environment library.
+    continual data source.  The protocol is intentionally small so the
+    package does not depend on a specific environment library.
     """
 
     def reset(self) -> TimeStep[ObservationT, InfoT]: ...
@@ -67,16 +70,31 @@ class World(Protocol[ObservationT, ActionT, InfoT]):
     def step(self, action: ActionT) -> TimeStep[ObservationT, InfoT]: ...
 
 
-class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
-    """Builds and updates the subjective state seen by the other OaK blocks.
+# ─────────────────────────────────────────────────────────────────────
+# The four main OaK interfaces
+# ─────────────────────────────────────────────────────────────────────
 
-    This is where an implementation decides what `subjective_state` means. For a simple
-    domain it may be a hand-built summary; for a more ambitious project it may
-    be the output of a learned encoder or recurrent memory system.
+
+class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
+    """Sutton's Perception: observations → subjective state + feature management.
+
+    Responsible for:
+
+    1. Turning raw observations into the agent's **subjective state** — the
+       internal representation that every other module sees.
+    2. Discovering, ranking, and managing **features** — the learned
+       representational structures that grow over the agent's lifetime.
+    3. Generating **subtasks** from the most useful features.
+
+    This encompasses what finer-grained designs split into a
+    `StateBuilder`, `FeatureBank`, `FeatureConstructor`,
+    `FeatureRanker`, and `SubtaskGenerator`
+    (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
     def reset(self) -> None:
+        """Reset all perception state for a new episode."""
         raise NotImplementedError
 
     @abstractmethod
@@ -84,368 +102,238 @@ class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
         self,
         observation: ObservationT,
         reward: float,
-        last_action: Optional[ActionT],
+        last_action: ActionT | None,
     ) -> SubjectiveStateT:
+        """Process a new observation and return the updated subjective state."""
         raise NotImplementedError
 
     @abstractmethod
     def current_subjective_state(self) -> SubjectiveStateT:
+        """Return the most recently computed subjective state."""
         raise NotImplementedError
 
+    @abstractmethod
+    def discover_and_rank_features(
+        self,
+        subjective_state: SubjectiveStateT,
+        utility_scores: Sequence[UtilityRecord],
+        feature_budget: int,
+    ) -> Sequence[FeatureId]:
+        """Propose new features, integrate them, and return the top-ranked IDs.
 
-class FeatureBank(ABC, Generic[SubjectiveStateT]):
-    """Stores currently active features and their activations."""
+        A typical implementation:
+
+        1. Proposes candidate features from the current subjective state.
+        2. Adds accepted candidates to its internal feature store.
+        3. Ranks all features using the provided utility scores.
+        4. Returns the top feature IDs (up to *feature_budget*).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def generate_subtasks(
+        self,
+        ranked_feature_ids: Sequence[FeatureId],
+    ) -> Sequence[SubtaskSpec]:
+        """Turn ranked feature IDs into subtask specifications."""
+        raise NotImplementedError
 
     @abstractmethod
     def list_features(self) -> Sequence[FeatureSpec]:
+        """Return all currently tracked features."""
         raise NotImplementedError
 
     @abstractmethod
-    def activations(
-        self,
-        subjective_state: SubjectiveStateT,
-    ) -> Mapping[FeatureId, float]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def add_candidates(
-        self, candidates: Sequence[FeatureCandidate]
-    ) -> Sequence[FeatureSpec]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def remove(self, feature_ids: Sequence[FeatureId]) -> None:
-        raise NotImplementedError
-
-
-class FeatureConstructor(ABC, Generic[SubjectiveStateT]):
-    """Proposes new candidate features."""
-
-    @abstractmethod
-    def propose(
-        self,
-        subjective_state: SubjectiveStateT,
-        active_features: Sequence[FeatureSpec],
-    ) -> Sequence[FeatureCandidate]:
-        raise NotImplementedError
-
-
-class FeatureRanker(ABC):
-    """Ranks features for downstream use."""
-
-    @abstractmethod
-    def rank(
-        self,
-        features: Sequence[FeatureSpec],
-        utilities: Sequence[UtilityRecord],
-        limit: Optional[int] = None,
-    ) -> Sequence[FeatureId]:
-        raise NotImplementedError
-
-
-class SubtaskGenerator(ABC, Generic[SubjectiveStateT]):
-    """Maps ranked features to subtasks."""
-
-    @abstractmethod
-    def generate(
-        self,
-        ranked_feature_ids: Sequence[FeatureId],
-        feature_bank: FeatureBank[SubjectiveStateT],
-    ) -> Sequence[SubtaskSpec]:
-        raise NotImplementedError
-
-
-class GeneralValueFunctionLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Learns one GeneralValueFunction online."""
-
-    @property
-    @abstractmethod
-    def spec(self) -> GeneralValueFunctionSpec:
-        raise NotImplementedError
-
-    @abstractmethod
-    def predict(
-        self,
-        subjective_state: SubjectiveStateT,
-        action: Optional[ActionT] = None,
-    ) -> float:
-        raise NotImplementedError
-
-    @abstractmethod
-    def update(
-        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
-    ) -> float:
+    def remove_features(self, feature_ids: Sequence[FeatureId]) -> None:
+        """Remove features by ID (called during curation)."""
         raise NotImplementedError
 
 
 class ValueFunction(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Owns the main and auxiliary value learners.
+    """Sutton's Value Function: value learning + utility assessment + curation.
 
-    A minimal implementation can expose a single predictive learner. A richer
-    implementation can maintain a bank of GeneralValueFunctions or related predictive signals.
+    Responsible for:
+
+    1. Learning **predictive value signals** (TD errors, GVF predictions)
+       from observed transitions.
+    2. **Predicting** cumulative signals for any given subjective state.
+    3. Assessing the **utility** of the agent's learned structures (features,
+       options, models) to decide what is worth keeping.
+    4. **Curating** — producing concrete keep/drop decisions based on utility.
+
+    This encompasses what finer-grained designs split into a
+    `ValueEstimator`, `GeneralValueFunctionLearner`,
+    `UtilityAssessor`, `Curator`, and `MetaStepSizeLearner`
+    (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
-    def list_general_value_functions(
+    def update(
         self,
-    ) -> Sequence[GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]]:
+        transition: Transition[ActionT, SubjectiveStateT, InfoT],
+    ) -> Mapping[GeneralValueFunctionId, float]:
+        """Learn from a transition and return TD-error signals."""
         raise NotImplementedError
 
     @abstractmethod
     def predict(
-        self, subjective_state: SubjectiveStateT
+        self,
+        subjective_state: SubjectiveStateT,
     ) -> Mapping[GeneralValueFunctionId, float]:
+        """Predict values for the given subjective state."""
         raise NotImplementedError
 
     @abstractmethod
-    def update(
-        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
-    ) -> Mapping[GeneralValueFunctionId, float]:
+    def observe_usage(self, usage_records: Sequence[UsageRecord]) -> None:
+        """Record usage evidence for utility assessment."""
         raise NotImplementedError
 
     @abstractmethod
-    def add_or_replace(
-        self, learner: GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]
-    ) -> None:
+    def utility_scores(self) -> Sequence[UtilityRecord]:
+        """Return current utility estimates for all tracked structures."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def curate(self) -> CurationDecision:
+        """Decide which learned structures to drop."""
         raise NotImplementedError
 
     @abstractmethod
     def remove(
-        self, general_value_function_ids: Sequence[GeneralValueFunctionId]
-    ) -> None:
-        raise NotImplementedError
-
-
-class Option(ABC, Generic[SubjectiveStateT, ActionT]):
-    """Temporal abstraction consisting of policy and termination."""
-
-    @property
-    @abstractmethod
-    def descriptor(self) -> OptionDescriptor:
-        raise NotImplementedError
-
-    @abstractmethod
-    def is_available(self, subjective_state: SubjectiveStateT) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    def act(self, subjective_state: SubjectiveStateT) -> ActionT:
-        raise NotImplementedError
-
-    @abstractmethod
-    def stop_probability(self, subjective_state: SubjectiveStateT) -> float:
-        raise NotImplementedError
-
-
-class OptionLibrary(ABC, Generic[SubjectiveStateT, ActionT]):
-    """Stores learned options."""
-
-    @abstractmethod
-    def list_options(self) -> Sequence[Option[SubjectiveStateT, ActionT]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get(self, option_id: OptionId) -> Option[SubjectiveStateT, ActionT]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def add_or_replace(self, option: Option[SubjectiveStateT, ActionT]) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def remove(self, option_ids: Sequence[OptionId]) -> None:
-        raise NotImplementedError
-
-
-class OptionLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Learns options from subtasks and experience."""
-
-    @abstractmethod
-    def ingest_subtasks(self, subtasks: Sequence[SubtaskSpec]) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def update(
-        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
-    ) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def export_options(self) -> Sequence[Option[SubjectiveStateT, ActionT]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
-        raise NotImplementedError
-
-
-class OptionModel(ABC, Generic[SubjectiveStateT]):
-    """Predictive model for one option."""
-
-    @property
-    @abstractmethod
-    def option_id(self) -> OptionId:
-        raise NotImplementedError
-
-    @abstractmethod
-    def predict(
         self,
-        subjective_state: SubjectiveStateT,
-    ) -> ModelPrediction[SubjectiveStateT]:
-        raise NotImplementedError
-
-
-class OptionModelLearner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Learns option models from experience."""
-
-    @abstractmethod
-    def update(
-        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
+        general_value_function_ids: Sequence[GeneralValueFunctionId],
     ) -> None:
+        """Remove value functions by ID (called during curation)."""
         raise NotImplementedError
 
-    @abstractmethod
-    def export_models(self) -> Sequence[OptionModel[SubjectiveStateT]]:
-        raise NotImplementedError
+    def update_meta(
+        self,
+        component_id: ComponentId,
+        error_signals: Mapping[str, float],
+    ) -> None:
+        """Update meta step-size information.  Default is a no-op."""
 
 
 class TransitionModel(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Predictive world model for actions and options.
+    """Sutton's Transition Model: world dynamics + option models + planning.
 
-    This interface is the planner-facing model of what will happen next. It may
-    be learned, analytic, approximate, or hybrid, as long as it can answer the
-    bounded queries the planner needs.
+    Responsible for:
+
+    1. **Learning** from observed transitions to improve its predictions.
+    2. Maintaining **option models** that predict the effect of temporal
+       abstractions.
+    3. Running bounded **planning** using the world model and the value
+       function, producing improvement signals for the reactive policy.
+
+    This encompasses what finer-grained designs split into a `WorldModel`,
+    `OptionModelLearner`, individual `OptionModel` objects, and a
+    `Planner` (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
     def update(
-        self, transition: Transition[Any, ActionT, SubjectiveStateT, InfoT]
+        self,
+        transition: Transition[ActionT, SubjectiveStateT, InfoT],
     ) -> None:
+        """Learn from an observed transition.
+
+        This should update both the world model and any option-model learners.
+        """
         raise NotImplementedError
 
     @abstractmethod
-    def predict_action(
+    def integrate_option_models(self) -> None:
+        """Export learned option models and integrate them into the world model.
+
+        Called after option learning so that planning reasons over fresh models.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def plan(
         self,
         subjective_state: SubjectiveStateT,
-        action: ActionT,
-    ) -> ModelPrediction[SubjectiveStateT]:
-        raise NotImplementedError
+        value_function: ValueFunction[SubjectiveStateT, ActionT, InfoT],
+        budget: int,
+    ) -> PlanningUpdate[ActionT]:
+        """Run bounded planning and return improvement signals.
 
-    @abstractmethod
-    def predict_option(
-        self,
-        subjective_state: SubjectiveStateT,
-        option_id: OptionId,
-    ) -> ModelPrediction[SubjectiveStateT]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def add_or_replace_option_models(
-        self, models: Sequence[OptionModel[SubjectiveStateT]]
-    ) -> None:
+        The planner uses the internal world model together with the supplied
+        *value_function* (for state evaluation) to produce value targets,
+        policy targets, or search statistics.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def remove_option_models(self, option_ids: Sequence[OptionId]) -> None:
+        """Remove option models by ID (called during curation)."""
         raise NotImplementedError
 
 
-class Planner(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
-    """Produces planning updates from the transition model.
+class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
+    """Sutton's Reactive Policy: action selection + option management.
 
-    The planner does not directly act in the world. Instead it returns
-    improvement signals, targets, or search statistics that the reactive policy
-    and value learners can use.
+    Responsible for:
+
+    1. **Selecting actions** — either primitive actions or temporal
+       abstractions (options) — based on the current subjective state.
+    2. Managing the **option library** and **option learning** pipeline.
+    3. Integrating **planning updates** and **value signals** into
+       decision-making.
+
+    This encompasses what finer-grained designs split into an
+    `ActionSelector`, `OptionLibrary`, and `OptionLearner`
+    (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
-    def plan_step(
+    def update(
         self,
-        subjective_state: SubjectiveStateT,
-        model: TransitionModel[SubjectiveStateT, ActionT, InfoT],
-        value_function: ValueFunction[SubjectiveStateT, ActionT, InfoT],
-        budget: int,
-    ) -> PlanningUpdate[ActionT]:
-        raise NotImplementedError
-
-
-class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActionT]):
-    """Chooses primitive actions or options from the current subjective state.
-
-    This is the foreground action-selection mechanism. It may be as small as a
-    hand-written policy for a toy domain or as complex as a learned policy head
-    over a rich subjective state representation.
-    """
-
-    @abstractmethod
-    def decide(
-        self,
-        subjective_state: SubjectiveStateT,
-        active_option: Optional[Option[SubjectiveStateT, ActionT]],
-        available_options: Sequence[Option[SubjectiveStateT, ActionT]],
-    ) -> PolicyDecision[ActionT]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def update_from_values(
-        self,
-        subjective_state: SubjectiveStateT,
+        transition: Transition[ActionT, SubjectiveStateT, InfoT],
         td_errors: Mapping[GeneralValueFunctionId, float],
     ) -> None:
+        """Update the policy and option learners from an observed transition."""
         raise NotImplementedError
 
     @abstractmethod
     def apply_planning_update(self, update: PlanningUpdate[ActionT]) -> None:
-        raise NotImplementedError
-
-
-class OptionKeyboard(ABC):
-    """Optional composition interface for combining options."""
-
-    @abstractmethod
-    def compose(self, intensities: Sequence[float]) -> OptionDescriptor:
-        raise NotImplementedError
-
-
-class MetaStepSizeLearner(ABC):
-    """Tracks or adapts per-component step-size metadata."""
-
-    @abstractmethod
-    def update(
-        self, component_id: ComponentId, error_signals: Mapping[str, float]
-    ) -> None:
+        """Integrate planning improvement signals into the policy."""
         raise NotImplementedError
 
     @abstractmethod
-    def step_sizes(self, component_id: ComponentId) -> Mapping[str, float]:
-        raise NotImplementedError
-
-
-class UtilityAssessor(ABC):
-    """Aggregates usage signals into utility estimates.
-
-    This is the accounting layer that estimates whether learned structures are
-    worth retaining. Feature generators, option learners, and model builders can
-    use these scores to decide what to keep improving.
-    """
-
-    @abstractmethod
-    def observe(self, usage: Sequence[UsageRecord]) -> None:
+    def ingest_subtasks(self, subtasks: Sequence[SubtaskSpec]) -> None:
+        """Feed newly created subtasks into the option learner."""
         raise NotImplementedError
 
     @abstractmethod
-    def scores(self) -> Sequence[UtilityRecord]:
+    def integrate_options(self) -> None:
+        """Export learned options into the option library."""
         raise NotImplementedError
 
+    @abstractmethod
+    def select_action(
+        self,
+        subjective_state: SubjectiveStateT,
+        option_stop_threshold: float,
+    ) -> tuple[ActionT, OptionId | None]:
+        """Choose a primitive action, possibly by continuing an active option.
 
-class Curator(ABC):
-    """Prunes low-utility architectural elements.
-
-    The curator turns utility estimates into concrete keep/drop decisions. A
-    conservative curator can return empty decisions; a more aggressive one can
-    actively delete obsolete features, options, models, or predictions.
-    """
+        Returns a `(primitive_action, active_option_id)` pair.  When no
+        option is active, *active_option_id* is `None`.
+        """
+        raise NotImplementedError
 
     @abstractmethod
-    def curate(self, utilities: Sequence[UtilityRecord]) -> CurationDecision:
+    def clear_active_option(self) -> None:
+        """Clear the currently executing option (e.g. at episode boundaries)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def remove_options(self, option_ids: Sequence[OptionId]) -> None:
+        """Remove options by ID (called during curation)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
+        """Remove subtasks by ID (called during curation)."""
         raise NotImplementedError

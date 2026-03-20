@@ -14,6 +14,7 @@ MARKDOWN_SNIPPETS = {
     "oak_architecture_api_intro": Path("docs/content/oak_architecture_api_intro.md"),
 }
 
+
 def _patch_pdoc_for_python_314() -> None:
     """Replace pdoc's vendored type evaluator with Python 3.14's version."""
 
@@ -40,10 +41,7 @@ def _patch_pdoc_for_python_314() -> None:
 def _load_markdown_sources() -> dict[str, str]:
     """Load authored Markdown fragments used by pdoc templates."""
 
-    sources = {
-        name: path.read_text()
-        for name, path in MARKDOWN_SNIPPETS.items()
-    }
+    sources = {name: path.read_text() for name, path in MARKDOWN_SNIPPETS.items()}
     return sources
 
 
@@ -61,8 +59,9 @@ def _prepare_output_directory(output_directory: Path) -> None:
 
     (output_directory / ".nojekyll").write_text("")
 
+
 def main() -> None:
-    """Generate the HTML API docs into ``docs/api``."""
+    """Generate the HTML API docs into `docs/api`."""
 
     output_directory = Path("docs/api")
     _prepare_output_directory(output_directory)

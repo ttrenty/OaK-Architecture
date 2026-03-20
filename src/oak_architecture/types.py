@@ -23,11 +23,9 @@ small `ObservationT`, `ActionT`, and `InfoT` that match their environment wrappe
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
-    Any,
     Callable,
     Generic,
     Mapping,
-    Optional,
     Sequence,
     TypeAlias,
     TypeVar,
@@ -37,7 +35,19 @@ ObservationT = TypeVar("ObservationT")
 ActionT = TypeVar("ActionT")
 # SubjectiveStateT is the agent's learned internal subjective state summary.
 SubjectiveStateT = TypeVar("SubjectiveStateT")
-InfoT = TypeVar("InfoT", bound=Mapping[str, Any])
+InfoT = TypeVar("InfoT")
+
+StructuredValue: TypeAlias = (
+    None
+    | bool
+    | int
+    | float
+    | str
+    | Sequence["StructuredValue"]
+    | Mapping[str, "StructuredValue"]
+)
+OpenPayload: TypeAlias = Mapping[str, object]
+StructuredPayload: TypeAlias = Mapping[str, StructuredValue]
 
 FeatureId: TypeAlias = str
 SubtaskId: TypeAlias = str
@@ -73,31 +83,36 @@ class TimeStep(Generic[ObservationT, InfoT]):
     reward: float
     terminated: bool = False
     truncated: bool = False
-    info: Optional[InfoT] = None
+    info: InfoT | None = None
 
 
 @dataclass(slots=True, frozen=True)
-class Transition(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
+class Transition(Generic[ActionT, SubjectiveStateT, InfoT]):
     """One subjective-state transition in agent terms.
 
     `Transition` is constructed by the agent after two consecutive time steps.
     Learners use it instead of the raw world stream so they can access both the
-    previous and next subjective state representations.
+    previous and next subjective state representations together with reward,
+    termination, and optional environment metadata.
     """
 
     subjective_state: SubjectiveStateT
     action: ActionT
     reward: float
     next_subjective_state: SubjectiveStateT
-    observation: Optional[ObservationT] = None
-    next_observation: Optional[ObservationT] = None
     terminated: bool = False
-    info: Optional[InfoT] = None
+    info: InfoT | None = None
 
 
-ScalarSignal: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
-ContinuationFn: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
-TerminationValueFn: TypeAlias = Callable[[Transition[Any, Any, Any, Any]], float]
+ScalarSignal: TypeAlias = Callable[
+    [Transition[ActionT, SubjectiveStateT, InfoT]], float
+]
+ContinuationFn: TypeAlias = Callable[
+    [Transition[ActionT, SubjectiveStateT, InfoT]], float
+]
+TerminationValueFn: TypeAlias = Callable[
+    [Transition[ActionT, SubjectiveStateT, InfoT]], float
+]
 
 
 @dataclass(slots=True, frozen=True)
@@ -107,7 +122,7 @@ class FeatureSpec:
     feature_id: FeatureId
     name: str
     description: str = ""
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,11 +133,11 @@ class FeatureCandidate:
     name: str
     origin: str
     description: str = ""
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
-class GeneralValueFunctionSpec:
+class GeneralValueFunctionSpec(Generic[ActionT, SubjectiveStateT, InfoT]):
     """General value function specification."""
 
     general_value_function_id: GeneralValueFunctionId
@@ -130,7 +145,7 @@ class GeneralValueFunctionSpec:
     cumulant: ScalarSignal
     continuation: ContinuationFn
     termination_value: TerminationValueFn
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -141,8 +156,8 @@ class SubtaskSpec:
     name: str
     feature_id: FeatureId
     intensity: float = 1.0
-    general_value_function_id: Optional[GeneralValueFunctionId] = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    general_value_function_id: GeneralValueFunctionId | None = None
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -151,17 +166,17 @@ class OptionDescriptor:
 
     option_id: OptionId
     name: str
-    subtask_id: Optional[SubtaskId] = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    subtask_id: SubtaskId | None = None
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
 class PolicyDecision(Generic[ActionT]):
     """Return type for reactive policy selection."""
 
-    action: Optional[ActionT] = None
-    option_id: Optional[OptionId] = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    action: ActionT | None = None
+    option_id: OptionId | None = None
+    metadata: OpenPayload = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         has_action = self.action is not None
@@ -178,9 +193,9 @@ class ModelPrediction(Generic[SubjectiveStateT]):
 
     predicted_subjective_state: SubjectiveStateT
     cumulative_reward: float
-    steps: Optional[int] = None
+    steps: int | None = None
     terminated: bool = False
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -188,8 +203,8 @@ class PlanningUpdate(Generic[ActionT]):
     """Outputs from one planning pass."""
 
     value_targets: Mapping[GeneralValueFunctionId, float] = field(default_factory=dict)
-    policy_targets: Mapping[str, Any] = field(default_factory=dict)
-    search_statistics: Mapping[str, Any] = field(default_factory=dict)
+    policy_targets: StructuredPayload = field(default_factory=dict)
+    search_statistics: StructuredPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -199,7 +214,7 @@ class UsageRecord:
     kind: ComponentKind
     component_id: ComponentId
     amount: float = 1.0
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: OpenPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -209,7 +224,7 @@ class UtilityRecord:
     kind: ComponentKind
     component_id: ComponentId
     utility: float
-    evidence: Mapping[str, Any] = field(default_factory=dict)
+    evidence: StructuredPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -223,7 +238,7 @@ class CurationDecision:
     drop_general_value_functions: Sequence[GeneralValueFunctionId] = field(
         default_factory=tuple
     )
-    notes: Mapping[str, Any] = field(default_factory=dict)
+    notes: StructuredPayload = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)
@@ -237,7 +252,7 @@ class AgentStepResult(Generic[ActionT, SubjectiveStateT]):
 
     action: ActionT
     subjective_state: SubjectiveStateT
-    active_option_id: Optional[OptionId] = None
-    planning_update: Optional[PlanningUpdate[ActionT]] = None
+    active_option_id: OptionId | None = None
+    planning_update: PlanningUpdate[ActionT] | None = None
     created_subtasks: Sequence[SubtaskSpec] = field(default_factory=tuple)
-    curation_decision: Optional[CurationDecision] = None
+    curation_decision: CurationDecision | None = None

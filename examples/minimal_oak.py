@@ -5,20 +5,19 @@ from __future__ import annotations
 This module answers a single question: can the current package interfaces be
 instantiated and run through a complete OaK step loop?
 
-The answer should remain "yes" even while the architecture is still under
-active development. That makes this module useful both as a tutorial and as a
-regression check for interface changes.
-
-Unlike the core package, this module lives outside `oak_architecture` on
-purpose. It demonstrates what it looks like for a downstream project to wire
-the published interfaces into a concrete agent.
+The implementation shows the **direct** approach: each of Sutton's four
+modules (Perception, Transition Model, Value Function, Reactive Policy) is
+implemented as a single class.  There is no need to use the fine-grained
+component interfaces or the composite wrappers — those exist for projects
+that need more modularity inside each module.
 
 What this module is:
 
 - a tiny integer world
-- a direct observation-to-subjective_state perception module
-- one simple feature, one subtask, and one trivial option
-- a no-op utility/curation setup
+- a direct observation-to-subjective_state perception with one fixed feature
+- a no-op transition model with trivial one-step planning
+- a simple value tracker with usage counting and no curation
+- a reactive policy that alternates actions and options
 
 What this module is not:
 
@@ -29,42 +28,24 @@ What this module is not:
 """
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Sequence, TypeAlias
+from typing import Mapping, Sequence, TypedDict
 
 from oak_architecture.agent import OaKAgent
 from oak_architecture.interfaces import (
-    Curator,
-    FeatureBank,
-    FeatureConstructor,
-    FeatureRanker,
-    GeneralValueFunctionLearner,
-    MetaStepSizeLearner,
-    Option,
-    OptionLearner,
-    OptionLibrary,
-    OptionModel,
-    OptionModelLearner,
     Perception,
-    Planner,
     ReactivePolicy,
-    SubtaskGenerator,
     TransitionModel,
-    UtilityAssessor,
     ValueFunction,
     World,
 )
 from oak_architecture.types import (
     CurationDecision,
-    FeatureCandidate,
     FeatureId,
     FeatureSpec,
     GeneralValueFunctionId,
-    GeneralValueFunctionSpec,
-    ModelPrediction,
     OptionDescriptor,
     OptionId,
     PlanningUpdate,
-    PolicyDecision,
     SubtaskId,
     SubtaskSpec,
     TimeStep,
@@ -75,7 +56,19 @@ from oak_architecture.types import (
 
 Observation = int
 Action = int
-MinimalInfo: TypeAlias = dict[str, Any]
+
+
+class MinimalInfo(TypedDict, total=False):
+    reset: bool
+    echo_action: Action
+
+
+class MinimalTraceStep(TypedDict):
+    subjective_state: "MinimalSubjectiveState"
+    action: Action
+    active_option_id: OptionId | None
+    created_subtasks: list[SubtaskId]
+    planning_budget_used: int | None
 
 
 @dataclass(slots=True, frozen=True)
@@ -85,7 +78,12 @@ class MinimalSubjectiveState:
     step_index: int
     observation: Observation
     reward: float
-    last_action: Optional[Action]
+    last_action: Action | None
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Environment
+# ─────────────────────────────────────────────────────────────────────
 
 
 class MinimalWorld(World[Observation, Action, MinimalInfo]):
@@ -111,37 +109,22 @@ class MinimalWorld(World[Observation, Action, MinimalInfo]):
         )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Perception
+# ─────────────────────────────────────────────────────────────────────
+
+
 class MinimalPerception(Perception[Observation, Action, MinimalSubjectiveState]):
-    """Converts each observation directly into a minimal subjective state object."""
+    """Direct observation-to-state mapping with one fixed feature.
+
+    - The subjective state is a thin wrapper around the observation.
+    - One identity feature ("observation") is always present.
+    - No new features are ever proposed.
+    - One subtask is created per feature (deduplicated).
+    """
 
     def __init__(self) -> None:
-        self._subjective_state = MinimalSubjectiveState(0, 0, 0.0, None)
-
-    def reset(self) -> None:
-        self._subjective_state = MinimalSubjectiveState(0, 0, 0.0, None)
-
-    def update(
-        self,
-        observation: Observation,
-        reward: float,
-        last_action: Optional[Action],
-    ) -> MinimalSubjectiveState:
-        self._subjective_state = MinimalSubjectiveState(
-            step_index=observation,
-            observation=observation,
-            reward=reward,
-            last_action=last_action,
-        )
-        return self._subjective_state
-
-    def current_subjective_state(self) -> MinimalSubjectiveState:
-        return self._subjective_state
-
-
-class MinimalFeatureBank(FeatureBank[MinimalSubjectiveState]):
-    """Holds one identity feature over the integer observation."""
-
-    def __init__(self) -> None:
+        self._state = MinimalSubjectiveState(0, 0, 0.0, None)
         self._features: dict[FeatureId, FeatureSpec] = {
             "observation": FeatureSpec(
                 feature_id="observation",
@@ -149,176 +132,178 @@ class MinimalFeatureBank(FeatureBank[MinimalSubjectiveState]):
                 description="Identity feature for the integer observation.",
             )
         }
+        self._created_subtask_for: set[FeatureId] = set()
 
-    def list_features(self) -> Sequence[FeatureSpec]:
-        return tuple(self._features.values())
+    def reset(self) -> None:
+        self._state = MinimalSubjectiveState(0, 0, 0.0, None)
 
-    def activations(
-        self, subjective_state: MinimalSubjectiveState
-    ) -> Mapping[FeatureId, float]:
-        return {"observation": float(subjective_state.observation)}
-
-    def add_candidates(
+    def update(
         self,
-        candidates: Sequence[FeatureCandidate],
-    ) -> Sequence[FeatureSpec]:
-        added: list[FeatureSpec] = []
-        for candidate in candidates:
-            spec = FeatureSpec(
-                feature_id=candidate.feature_id,
-                name=candidate.name,
-                description=candidate.description,
-                metadata=candidate.metadata,
-            )
-            self._features[candidate.feature_id] = spec
-            added.append(spec)
-        return tuple(added)
+        observation: Observation,
+        reward: float,
+        last_action: Action | None,
+    ) -> MinimalSubjectiveState:
+        self._state = MinimalSubjectiveState(
+            step_index=observation,
+            observation=observation,
+            reward=reward,
+            last_action=last_action,
+        )
+        return self._state
 
-    def remove(self, feature_ids: Sequence[FeatureId]) -> None:
-        for feature_id in feature_ids:
-            self._features.pop(feature_id, None)
+    def current_subjective_state(self) -> MinimalSubjectiveState:
+        return self._state
 
-
-class MinimalFeatureConstructor(FeatureConstructor[MinimalSubjectiveState]):
-    """Returns no new features, keeping the example intentionally minimal."""
-
-    def propose(
+    def discover_and_rank_features(
         self,
         subjective_state: MinimalSubjectiveState,
-        active_features: Sequence[FeatureSpec],
-    ) -> Sequence[FeatureCandidate]:
-        return ()
-
-
-class MinimalFeatureRanker(FeatureRanker):
-    """Keeps feature ordering stable and deterministic."""
-
-    def rank(
-        self,
-        features: Sequence[FeatureSpec],
-        utilities: Sequence[UtilityRecord],
-        limit: Optional[int] = None,
+        utility_scores: Sequence[UtilityRecord],
+        feature_budget: int,
     ) -> Sequence[FeatureId]:
-        feature_ids = [feature.feature_id for feature in features]
-        return tuple(feature_ids if limit is None else feature_ids[:limit])
+        # No new features proposed; rank existing ones in insertion order.
+        ids = list(self._features.keys())
+        return tuple(ids[:feature_budget])
 
-
-class MinimalSubtaskGenerator(SubtaskGenerator[MinimalSubjectiveState]):
-    """Creates at most one subtask per feature."""
-
-    def __init__(self) -> None:
-        self._created_for_feature: set[FeatureId] = set()
-
-    def generate(
+    def generate_subtasks(
         self,
         ranked_feature_ids: Sequence[FeatureId],
-        feature_bank: FeatureBank[MinimalSubjectiveState],
     ) -> Sequence[SubtaskSpec]:
         created: list[SubtaskSpec] = []
-        for feature_id in ranked_feature_ids:
-            if feature_id in self._created_for_feature:
+        for fid in ranked_feature_ids:
+            if fid in self._created_subtask_for:
                 continue
-            self._created_for_feature.add(feature_id)
+            self._created_subtask_for.add(fid)
             created.append(
                 SubtaskSpec(
-                    subtask_id=f"subtask:{feature_id}",
-                    name=f"Track {feature_id}",
-                    feature_id=feature_id,
+                    subtask_id=f"subtask:{fid}",
+                    name=f"Track {fid}",
+                    feature_id=fid,
                 )
             )
         return tuple(created)
 
+    def list_features(self) -> Sequence[FeatureSpec]:
+        return tuple(self._features.values())
 
-class MinimalGeneralValueFunctionLearner(
-    GeneralValueFunctionLearner[MinimalSubjectiveState, Action, MinimalInfo]
+    def remove_features(self, feature_ids: Sequence[FeatureId]) -> None:
+        for fid in feature_ids:
+            self._features.pop(fid, None)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Transition Model
+# ─────────────────────────────────────────────────────────────────────
+
+
+class MinimalTransitionModel(
+    TransitionModel[MinimalSubjectiveState, Action, MinimalInfo]
 ):
-    """Trivial GeneralValueFunction learner that stores only the latest reward."""
+    """Trivial world model with one-step lookahead planning.
 
-    def __init__(
-        self, general_value_function_id: GeneralValueFunctionId, name: str
+    - No real model learning (update is a no-op).
+    - No option models.
+    - Planning calls predict once and returns value targets.
+    """
+
+    def update(
+        self,
+        transition: Transition[Action, MinimalSubjectiveState, MinimalInfo],
     ) -> None:
-        self._spec = GeneralValueFunctionSpec(
-            general_value_function_id=general_value_function_id,
-            name=name,
-            cumulant=lambda transition: transition.reward,
-            continuation=lambda transition: 0.0 if transition.terminated else 1.0,
-            termination_value=lambda transition: 0.0,
-        )
-        self._value = 0.0
+        pass
 
-    @property
-    def spec(self) -> GeneralValueFunctionSpec:
-        return self._spec
+    def integrate_option_models(self) -> None:
+        pass
+
+    def plan(
+        self,
+        subjective_state: MinimalSubjectiveState,
+        value_function: ValueFunction[
+            MinimalSubjectiveState, Action, MinimalInfo
+        ],
+        budget: int,
+    ) -> PlanningUpdate[Action]:
+        return PlanningUpdate(
+            value_targets=value_function.predict(subjective_state),
+            policy_targets={"preferred_action": 0},
+            search_statistics={"budget_used": budget},
+        )
+
+    def remove_option_models(self, option_ids: Sequence[OptionId]) -> None:
+        pass
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Value Function
+# ─────────────────────────────────────────────────────────────────────
+
+
+class MinimalValueFunction(
+    ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]
+):
+    """Stores latest reward as a value, counts usage, never curates.
+
+    - One implicit value learner ("main") that stores the latest reward.
+    - Usage records are accumulated for utility scoring.
+    - Curation always returns an empty decision (no pruning).
+    """
+
+    def __init__(self) -> None:
+        self._value: float = 0.0
+        self._usage_records: list[UsageRecord] = []
+
+    def update(
+        self,
+        transition: Transition[Action, MinimalSubjectiveState, MinimalInfo],
+    ) -> Mapping[GeneralValueFunctionId, float]:
+        self._value = transition.reward
+        return {"main": 0.0}
 
     def predict(
         self,
         subjective_state: MinimalSubjectiveState,
-        action: Optional[Action] = None,
-    ) -> float:
-        return self._value
-
-    def update(
-        self,
-        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> float:
-        self._value = transition.reward
-        return 0.0
-
-
-class MinimalValueFunction(ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]):
-    """Container for the main trivial GeneralValueFunction learner."""
-
-    def __init__(self) -> None:
-        self._learners: dict[
-            GeneralValueFunctionId, MinimalGeneralValueFunctionLearner
-        ] = {"main": MinimalGeneralValueFunctionLearner("main", "Main reward")}
-
-    def list_general_value_functions(
-        self,
-    ) -> Sequence[
-        GeneralValueFunctionLearner[MinimalSubjectiveState, Action, MinimalInfo]
-    ]:
-        return tuple(self._learners.values())
-
-    def predict(
-        self, subjective_state: MinimalSubjectiveState
     ) -> Mapping[GeneralValueFunctionId, float]:
-        return {
-            general_value_function_id: learner.predict(subjective_state)
-            for general_value_function_id, learner in self._learners.items()
-        }
+        return {"main": self._value}
 
-    def update(
-        self,
-        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> Mapping[GeneralValueFunctionId, float]:
-        return {
-            general_value_function_id: learner.update(transition)
-            for general_value_function_id, learner in self._learners.items()
-        }
+    def observe_usage(self, usage_records: Sequence[UsageRecord]) -> None:
+        self._usage_records.extend(usage_records)
 
-    def add_or_replace(
-        self,
-        learner: GeneralValueFunctionLearner[
-            MinimalSubjectiveState, Action, MinimalInfo
-        ],
-    ) -> None:
-        self._learners[learner.spec.general_value_function_id] = learner  # type: ignore[assignment]
+    def utility_scores(self) -> Sequence[UtilityRecord]:
+        totals: dict[tuple[str, str], float] = {}
+        latest: dict[tuple[str, str], UsageRecord] = {}
+        for record in self._usage_records:
+            key = (record.kind.value, record.component_id)
+            totals[key] = totals.get(key, 0.0) + record.amount
+            latest[key] = record
+        return tuple(
+            UtilityRecord(
+                kind=record.kind,
+                component_id=record.component_id,
+                utility=totals[key],
+            )
+            for key, record in latest.items()
+        )
+
+    def curate(self) -> CurationDecision:
+        return CurationDecision()
 
     def remove(
-        self, general_value_function_ids: Sequence[GeneralValueFunctionId]
+        self,
+        general_value_function_ids: Sequence[GeneralValueFunctionId],
     ) -> None:
-        for general_value_function_id in general_value_function_ids:
-            if general_value_function_id != "main":
-                self._learners.pop(general_value_function_id, None)
+        pass
 
 
-class MinimalOption(Option[MinimalSubjectiveState, Action]):
-    """Option that always emits the same primitive action."""
+# ─────────────────────────────────────────────────────────────────────
+# Reactive Policy
+# ─────────────────────────────────────────────────────────────────────
 
-    def __init__(self, descriptor: OptionDescriptor, action: Action = 1) -> None:
-        self._descriptor = descriptor
-        self._action = action
+
+@dataclass
+class _MinimalOption:
+    """Trivial option that always emits action=1 and stops immediately."""
+
+    _descriptor: OptionDescriptor
+    _action: Action = 1
 
     @property
     def descriptor(self) -> OptionDescriptor:
@@ -334,200 +319,27 @@ class MinimalOption(Option[MinimalSubjectiveState, Action]):
         return 1.0
 
 
-class MinimalOptionLibrary(OptionLibrary[MinimalSubjectiveState, Action]):
-    """In-memory storage for smoke-test options."""
+class MinimalReactivePolicy(
+    ReactivePolicy[MinimalSubjectiveState, Action, MinimalInfo]
+):
+    """Alternates primitive actions and options, creates options from subtasks.
+
+    - On even observations: primitive action 0.
+    - On odd observations with options available: executes the first option.
+    - On odd observations without options: primitive action 1.
+    - Options are created 1:1 from ingested subtasks.
+    """
 
     def __init__(self) -> None:
-        self._options: dict[OptionId, Option[MinimalSubjectiveState, Action]] = {}
-
-    def list_options(self) -> Sequence[Option[MinimalSubjectiveState, Action]]:
-        return tuple(self._options.values())
-
-    def get(self, option_id: OptionId) -> Option[MinimalSubjectiveState, Action]:
-        return self._options[option_id]
-
-    def add_or_replace(self, option: Option[MinimalSubjectiveState, Action]) -> None:
-        self._options[option.descriptor.option_id] = option
-
-    def remove(self, option_ids: Sequence[OptionId]) -> None:
-        for option_id in option_ids:
-            self._options.pop(option_id, None)
-
-
-class MinimalOptionLearner(OptionLearner[MinimalSubjectiveState, Action, MinimalInfo]):
-    """Creates one trivial option per discovered subtask."""
-
-    def __init__(self) -> None:
+        self._active_option: _MinimalOption | None = None
+        self._options: dict[OptionId, _MinimalOption] = {}
         self._subtasks: dict[SubtaskId, SubtaskSpec] = {}
-        self._options: dict[OptionId, MinimalOption] = {}
-
-    def ingest_subtasks(self, subtasks: Sequence[SubtaskSpec]) -> None:
-        for subtask in subtasks:
-            self._subtasks[subtask.subtask_id] = subtask
-            option_id = f"option:{subtask.subtask_id}"
-            self._options[option_id] = MinimalOption(
-                OptionDescriptor(
-                    option_id=option_id,
-                    name=f"Option for {subtask.subtask_id}",
-                    subtask_id=subtask.subtask_id,
-                )
-            )
-
-    def update(
-        self,
-        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> None:
-        return None
-
-    def export_options(self) -> Sequence[Option[MinimalSubjectiveState, Action]]:
-        return tuple(self._options.values())
-
-    def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
-        for subtask_id in subtask_ids:
-            self._subtasks.pop(subtask_id, None)
-            self._options.pop(f"option:{subtask_id}", None)
-
-
-class MinimalOptionModel(OptionModel[MinimalSubjectiveState]):
-    """Option model that predicts no meaningful change."""
-
-    def __init__(self, option_id: OptionId) -> None:
-        self._option_id = option_id
-
-    @property
-    def option_id(self) -> OptionId:
-        return self._option_id
-
-    def predict(
-        self, subjective_state: MinimalSubjectiveState
-    ) -> ModelPrediction[MinimalSubjectiveState]:
-        return ModelPrediction(
-            predicted_subjective_state=subjective_state,
-            cumulative_reward=0.0,
-            steps=1,
-            terminated=False,
-        )
-
-
-class MinimalOptionModelLearner(
-    OptionModelLearner[MinimalSubjectiveState, Action, MinimalInfo]
-):
-    """Wraps the smoke-test options in smoke-test models."""
-
-    def __init__(self, option_learner: MinimalOptionLearner) -> None:
-        self._option_learner = option_learner
-
-    def update(
-        self,
-        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> None:
-        return None
-
-    def export_models(self) -> Sequence[OptionModel[MinimalSubjectiveState]]:
-        return tuple(
-            MinimalOptionModel(option.descriptor.option_id)
-            for option in self._option_learner.export_options()
-        )
-
-
-class MinimalTransitionModel(
-    TransitionModel[MinimalSubjectiveState, Action, MinimalInfo]
-):
-    """Very small predictive model used only to exercise planner calls."""
-
-    def __init__(self) -> None:
-        self._option_models: dict[OptionId, OptionModel[MinimalSubjectiveState]] = {}
-
-    def update(
-        self,
-        transition: Transition[Any, Action, MinimalSubjectiveState, MinimalInfo],
-    ) -> None:
-        return None
-
-    def predict_action(
-        self,
-        subjective_state: MinimalSubjectiveState,
-        action: Action,
-    ) -> ModelPrediction[MinimalSubjectiveState]:
-        return ModelPrediction(
-            predicted_subjective_state=MinimalSubjectiveState(
-                step_index=subjective_state.step_index + 1,
-                observation=subjective_state.observation + 1,
-                reward=1.0 if action == 1 else 0.0,
-                last_action=action,
-            ),
-            cumulative_reward=1.0 if action == 1 else 0.0,
-            steps=1,
-            terminated=False,
-        )
-
-    def predict_option(
-        self,
-        subjective_state: MinimalSubjectiveState,
-        option_id: OptionId,
-    ) -> ModelPrediction[MinimalSubjectiveState]:
-        model = self._option_models.get(option_id)
-        if model is not None:
-            return model.predict(subjective_state)
-        return ModelPrediction(
-            predicted_subjective_state=subjective_state,
-            cumulative_reward=0.0,
-            steps=1,
-            terminated=False,
-        )
-
-    def add_or_replace_option_models(
-        self,
-        models: Sequence[OptionModel[MinimalSubjectiveState]],
-    ) -> None:
-        for model in models:
-            self._option_models[model.option_id] = model
-
-    def remove_option_models(self, option_ids: Sequence[OptionId]) -> None:
-        for option_id in option_ids:
-            self._option_models.pop(option_id, None)
-
-
-class MinimalPlanner(Planner[MinimalSubjectiveState, Action, MinimalInfo]):
-    """Consumes the transition model once and returns a tiny planning update."""
-
-    def plan_step(
-        self,
-        subjective_state: MinimalSubjectiveState,
-        model: TransitionModel[MinimalSubjectiveState, Action, MinimalInfo],
-        value_function: ValueFunction[MinimalSubjectiveState, Action, MinimalInfo],
-        budget: int,
-    ) -> PlanningUpdate[Action]:
-        _ = model.predict_action(subjective_state, 0)
-        return PlanningUpdate(
-            value_targets=value_function.predict(subjective_state),
-            policy_targets={"preferred_action": 0},
-            search_statistics={"budget_used": budget},
-        )
-
-
-class MinimalReactivePolicy(ReactivePolicy[MinimalSubjectiveState, Action]):
-    """Alternates between primitive actions and the first available option."""
-
-    def __init__(self) -> None:
         self.last_td_errors: Mapping[GeneralValueFunctionId, float] = {}
-        self.last_planning_update: Optional[PlanningUpdate[Action]] = None
+        self.last_planning_update: PlanningUpdate[Action] | None = None
 
-    def decide(
+    def update(
         self,
-        subjective_state: MinimalSubjectiveState,
-        active_option: Optional[Option[MinimalSubjectiveState, Action]],
-        available_options: Sequence[Option[MinimalSubjectiveState, Action]],
-    ) -> PolicyDecision[Action]:
-        if subjective_state.observation % 2 == 0:
-            return PolicyDecision(action=0)
-        if available_options:
-            return PolicyDecision(option_id=available_options[0].descriptor.option_id)
-        return PolicyDecision(action=1)
-
-    def update_from_values(
-        self,
-        subjective_state: MinimalSubjectiveState,
+        transition: Transition[Action, MinimalSubjectiveState, MinimalInfo],
         td_errors: Mapping[GeneralValueFunctionId, float],
     ) -> None:
         self.last_td_errors = dict(td_errors)
@@ -535,86 +347,94 @@ class MinimalReactivePolicy(ReactivePolicy[MinimalSubjectiveState, Action]):
     def apply_planning_update(self, update: PlanningUpdate[Action]) -> None:
         self.last_planning_update = update
 
-
-class MinimalUtilityAssessor(UtilityAssessor):
-    """Accumulates raw usage counts into simple utility scores."""
-
-    def __init__(self) -> None:
-        self._usage_records: list[UsageRecord] = []
-
-    def observe(self, usage: Sequence[UsageRecord]) -> None:
-        self._usage_records.extend(usage)
-
-    def scores(self) -> Sequence[UtilityRecord]:
-        totals: dict[tuple[str, str], float] = {}
-        latest_records: dict[tuple[str, str], UsageRecord] = {}
-        for record in self._usage_records:
-            key = (record.kind.value, record.component_id)
-            totals[key] = totals.get(key, 0.0) + record.amount
-            latest_records[key] = record
-        return tuple(
-            UtilityRecord(
-                kind=record.kind,
-                component_id=record.component_id,
-                utility=totals[key],
+    def ingest_subtasks(self, subtasks: Sequence[SubtaskSpec]) -> None:
+        for subtask in subtasks:
+            self._subtasks[subtask.subtask_id] = subtask
+            option_id = f"option:{subtask.subtask_id}"
+            self._options[option_id] = _MinimalOption(
+                OptionDescriptor(
+                    option_id=option_id,
+                    name=f"Option for {subtask.subtask_id}",
+                    subtask_id=subtask.subtask_id,
+                )
             )
-            for key, record in latest_records.items()
-        )
+
+    def integrate_options(self) -> None:
+        pass  # options already registered in ingest_subtasks
+
+    def select_action(
+        self,
+        subjective_state: MinimalSubjectiveState,
+        option_stop_threshold: float,
+    ) -> tuple[Action, OptionId | None]:
+        # Check if active option should continue
+        if self._active_option is not None:
+            stop_prob = self._active_option.stop_probability(subjective_state)
+            if stop_prob < option_stop_threshold:
+                return (
+                    self._active_option.act(subjective_state),
+                    self._active_option.descriptor.option_id,
+                )
+            self._active_option = None
+
+        # Even observation → primitive action 0
+        if subjective_state.observation % 2 == 0:
+            return (0, None)
+
+        # Odd observation → first available option, or primitive action 1
+        options = list(self._options.values())
+        if options:
+            self._active_option = options[0]
+            return (
+                self._active_option.act(subjective_state),
+                self._active_option.descriptor.option_id,
+            )
+        return (1, None)
+
+    def clear_active_option(self) -> None:
+        self._active_option = None
+
+    def remove_options(self, option_ids: Sequence[OptionId]) -> None:
+        for oid in option_ids:
+            self._options.pop(oid, None)
+        if (
+            self._active_option is not None
+            and self._active_option.descriptor.option_id in option_ids
+        ):
+            self._active_option = None
+
+    def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
+        for sid in subtask_ids:
+            self._subtasks.pop(sid, None)
+            self._options.pop(f"option:{sid}", None)
 
 
-class MinimalCurator(Curator):
-    """Returns no pruning decisions in the smoke implementation."""
-
-    def curate(self, utilities: Sequence[UtilityRecord]) -> CurationDecision:
-        return CurationDecision()
-
-
-class MinimalMetaStepSizeLearner(MetaStepSizeLearner):
-    """Stores the latest error signals without adapting anything."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, dict[str, float]] = {}
-
-    def update(self, component_id: str, error_signals: Mapping[str, float]) -> None:
-        self._store[component_id] = dict(error_signals)
-
-    def step_sizes(self, component_id: str) -> Mapping[str, float]:
-        return self._store.get(component_id, {})
+# ─────────────────────────────────────────────────────────────────────
+# Wiring
+# ─────────────────────────────────────────────────────────────────────
 
 
 def build_minimal_agent() -> (
     OaKAgent[Observation, Action, MinimalSubjectiveState, MinimalInfo]
 ):
     """Construct a fully wired smoke-test OaK agent."""
-    option_learner = MinimalOptionLearner()
     return OaKAgent(
         perception=MinimalPerception(),
-        feature_bank=MinimalFeatureBank(),
-        feature_constructor=MinimalFeatureConstructor(),
-        feature_ranker=MinimalFeatureRanker(),
-        subtask_generator=MinimalSubtaskGenerator(),
+        transition_model=MinimalTransitionModel(),
         value_function=MinimalValueFunction(),
         reactive_policy=MinimalReactivePolicy(),
-        option_library=MinimalOptionLibrary(),
-        option_learner=option_learner,
-        option_model_learner=MinimalOptionModelLearner(option_learner),
-        transition_model=MinimalTransitionModel(),
-        planner=MinimalPlanner(),
-        utility_assessor=MinimalUtilityAssessor(),
-        curator=MinimalCurator(),
-        meta_step_sizes=MinimalMetaStepSizeLearner(),
         planning_budget=4,
     )
 
 
-def run_minimal_episode(horizon: int = 5) -> list[dict[str, Any]]:
+def run_minimal_episode(horizon: int = 5) -> list[MinimalTraceStep]:
     """Run a short smoke episode and return a compact trace."""
     world = MinimalWorld(horizon=horizon)
     agent = build_minimal_agent()
     step = world.reset()
     agent.reset()
 
-    trace: list[dict[str, Any]] = []
+    trace: list[MinimalTraceStep] = []
 
     for _ in range(horizon):
         result = agent.step(step)
