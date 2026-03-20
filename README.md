@@ -20,14 +20,32 @@ The published package is intentionally interface-only. Concrete examples in
 this repository live under `examples/` so they reflect how downstream users can
 implement the architecture in practice.
 
+The package exposes **two abstraction levels**:
+
+- the default **four-interface layer:** `OaKAgent` plus the four main OaK interfaces:
+  `Perception`, `TransitionModel`, `ValueFunction`, and `ReactivePolicy`.
+  This is the simplest way to use the package and the main conceptual surface.
+- the optional **fine-grained layer:** `oak_architecture.fine_grained`, which breaks those four slots into smaller
+  building blocks and provides `Composite*` implementations for wiring them
+  back into the main agent.
+
+In other words, you can either:
+
+- implement the four main interfaces directly
+- or work one level lower and assemble those interfaces from finer-grained
+  parts
+
 This repository currently provides:
 
 - shared types such as `TimeStep`, `Transition`, `PlanningUpdate`, and
   `AgentStepResult`
-- abstract interfaces for the main OaK components
+- abstract interfaces for the four main OaK components
+- an optional `oak_architecture.fine_grained` submodule with lower-level
+  building blocks and `Composite*` implementations
 - the package's official `OaKAgent` coordinator that wires those components
   together
-- a minimal external example implementation used as a smoke test
+- two minimal external example implementations used as smoke tests:
+  one direct and one fine-grained
 
 ## Documentation
 
@@ -39,7 +57,8 @@ The docs include:
 
 - the API reference for `oak_architecture`
 - the architecture guide embedded directly into that API page
-- rendered diagrams for the OaK control flow and component layout
+- rendered diagrams for the default four-interface view, the fine-grained
+  slot map, and the runtime call paths
 
 ## Development
 
@@ -67,13 +86,11 @@ pixi install
 
 ### Common tasks
 
-- `pixi run test`
+- `pixi run tests`
   Install the package in editable mode and run every Python test script in
   `tst/`.
 - `pixi run docs`
   Generate the API documentation site in `docs/api/`.
-- `pixi run docs_api`
-  Compatibility alias for `pixi run docs`.
 - `pixi run render_diagrams`
   Regenerate the rendered PlantUML diagrams used by the docs.
 - `pixi run build_package`
@@ -87,11 +104,15 @@ A `Makefile` is also provided for convenience, but it only forwards to
 - `src/oak_architecture/`
   Core package with shared types, interface definitions, and the canonical
   `OaKAgent` execution loop.
+- `src/oak_architecture/fine_grained/`
+  Optional lower-level interfaces and `Composite*` implementations for
+  projects that want to swap internal building blocks independently.
 - `examples/`
   Repository-level example implementations that use the package as an external
-  consumer would.
+  consumer would, including `minimal_oak.py` and
+  `minimal_oak_fine_grained.py`.
 - `tst/`
-  Runnable test scripts. `pixi run test` executes every `*.py` file in this
+  Runnable test scripts. `pixi run tests` executes every `*.py` file in this
   directory tree.
 - `docs/`
   Documentation sources, diagrams, API-doc templates, and generated API docs.
@@ -99,5 +120,5 @@ A `Makefile` is also provided for convenience, but it only forwards to
 ## Working in this repository
 
 If you want to prototype a concrete implementation in this repository, place it
-under `examples/` and add checks under `tst/`. Running `pixi run test` will
+under `examples/` and add checks under `tst/`. Running `pixi run tests` will
 pick up any new Python test file automatically.

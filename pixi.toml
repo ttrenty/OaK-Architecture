@@ -16,7 +16,7 @@ inputs = [
 ]
 outputs = ["dist/*"]
 
-[tasks.test]
+[tasks.tests]
 cmd = """
 bash -lc '
 python -m pip install -e . >/dev/null 2>&1 &&
@@ -28,8 +28,8 @@ done
 """
 # inputs = ["pixi.toml", "pyproject.toml", "examples/**/*.py", "src/**/*.py", "tst/**/*.py"]
 
-[tasks.render_plantuml]
-cmd = "mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_overview.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_overview.svg docs/api/img/oak_runtime_overview.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
+[tasks._render_plantuml]
+cmd = "rm -f docs/diagrams/oak_core.svg docs/diagrams/oak_architecture.svg docs/diagrams/oak_runtime_overview.svg docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_core.svg docs/api/img/oak_architecture.svg docs/api/img/oak_runtime_overview.svg docs/api/img/oak_runtime_sequence.svg && mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_overview.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_overview.svg docs/api/img/oak_runtime_overview.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
 inputs = ["docs/diagrams/**/*.puml"]
 outputs = [
     "docs/api/img/oak_core.svg",
@@ -39,7 +39,7 @@ outputs = [
 ]
 
 [tasks.render_diagrams]
-depends-on = ["render_plantuml"]
+depends-on = ["_render_plantuml"]
 
 [tasks.docs]
 cmd = "python docs/tools/generate_api_docs.py && echo 'API documentation available at docs/api/index.html'"
@@ -54,11 +54,8 @@ inputs = [
 ]
 outputs = ["docs/api/**"]
 
-[tasks.docs_api]
-depends-on = ["docs"]
-
 [tasks.clean]
-cmd = "rm -rf dist build docs/api *.egg-info"
+cmd = "rm -rf dist build docs/api src/oak_architecture.egg-info src/oak_architecture/__pycache__ examples/__pycache__ docs/tools/__pycache__"
 
 [dependencies]
 python = ">=3.14.3,<3.15"

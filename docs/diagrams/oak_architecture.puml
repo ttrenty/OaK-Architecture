@@ -1,14 +1,20 @@
 @startuml
-title OaKAgent.step(...): architecture of calls and dependencies\n(OaKAgent orchestrates the whole step implicitly)
+title OaK fine_grained: slot map of fine-grained interfaces
 
-left to right direction
 hide stereotype
 skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
-skinparam linetype polyline
-skinparam ranksep 140
-skinparam nodesep 70
+skinparam linetype ortho
+skinparam ranksep 70
+skinparam nodesep 28
+
+skinparam rectangle<<orchestrator>> {
+  BackgroundColor #FFF7DF
+  BorderColor #B45F06
+  FontColor #7A4A00
+  FontStyle bold
+}
 
 skinparam package<<family>> {
   BackgroundColor #FFF7DF
@@ -16,7 +22,7 @@ skinparam package<<family>> {
   FontColor #7A4A00
 }
 
-skinparam rectangle<<main_component>> {
+skinparam rectangle<<composite>> {
   BackgroundColor #FFE599
   BorderColor #B45F06
   FontColor #5F3B00
@@ -29,124 +35,110 @@ skinparam rectangle<<support_component>> {
   FontColor #333333
 }
 
-skinparam artifact {
-  BackgroundColor #F3F3F3
-  BorderColor #999999
-  FontColor #333333
+skinparam rectangle<<associated_interface>> {
+  BackgroundColor #FDFDFD
+  BorderColor #B7B7B7
+  FontColor #555555
 }
 
-actor caller
-artifact "time_step" as time_step
-artifact "subjective_state" as subjective_state
-artifact "transition" as transition
-artifact "planning_update" as planning_update
-artifact "action" as action
-artifact "step_memory\nlast_subjective_state\nlast_action\nlast_observation\nactive_option" as step_memory
+rectangle "OaKAgent\ncoordinates four default slots" as agent <<orchestrator>>
 
-package "Perception family" <<family>> {
-  rectangle "perception" as perception <<main_component>>
-  rectangle "feature_constructor" as feature_constructor <<support_component>>
-  rectangle "feature_bank" as feature_bank <<support_component>>
-  rectangle "feature_ranker" as feature_ranker <<support_component>>
-  rectangle "subtask_generator" as subtask_generator <<support_component>>
+package "Perception slot\nimplements Perception" as perception_slot <<family>> {
+  rectangle "CompositePerception" as composite_perception <<composite>>
+  rectangle "StateBuilder" as state_builder <<support_component>>
+  rectangle "FeatureBank" as feature_bank <<support_component>>
+  rectangle "FeatureConstructor" as feature_constructor <<support_component>>
+  rectangle "FeatureRanker" as feature_ranker <<support_component>>
+  rectangle "SubtaskGenerator" as subtask_generator <<support_component>>
 
-  perception -[hidden]down-> feature_constructor
-  feature_constructor -[hidden]down-> feature_bank
-  feature_bank -[hidden]down-> feature_ranker
+  composite_perception --> state_builder
+  composite_perception --> feature_bank
+  composite_perception --> feature_constructor
+  composite_perception --> feature_ranker
+  composite_perception --> subtask_generator
+
+  state_builder -[hidden]down-> feature_bank
+  feature_bank -[hidden]down-> feature_constructor
+  feature_constructor -[hidden]down-> feature_ranker
   feature_ranker -[hidden]down-> subtask_generator
 }
 
-package "Transition Model family" <<family>> {
-  rectangle "planner" as planner <<support_component>>
-  rectangle "transition_model" as transition_model <<main_component>>
-  rectangle "option_model_learner" as option_model_learner <<support_component>>
+package "TransitionModel slot\nimplements TransitionModel" as transition_slot <<family>> {
+  rectangle "CompositeTransitionModel" as composite_transition_model <<composite>>
+  rectangle "WorldModel" as world_model <<support_component>>
+  rectangle "OptionModelLearner" as option_model_learner <<support_component>>
+  rectangle "Planner" as planner <<support_component>>
+  rectangle "OptionModel\n(associated interface)" as option_model <<associated_interface>>
 
-  planner -[hidden]down-> transition_model
-  transition_model -[hidden]down-> option_model_learner
+  composite_transition_model --> world_model
+  composite_transition_model --> option_model_learner
+  composite_transition_model --> planner
+  option_model_learner ..> option_model : exports
+  world_model ..> option_model : consumes
+
+  world_model -[hidden]down-> option_model_learner
+  option_model_learner -[hidden]down-> planner
+  planner -[hidden]down-> option_model
 }
 
-package "Value Function family" <<family>> {
-  rectangle "value_function" as value_function <<main_component>>
-  rectangle "utility_assessor" as utility_assessor <<support_component>>
-  rectangle "curator" as curator <<support_component>>
-  rectangle "meta_step_sizes" as meta_step_sizes <<support_component>>
+package "ValueFunction slot\nimplements ValueFunction" as value_slot <<family>> {
+  rectangle "CompositeValueFunction" as composite_value_function <<composite>>
+  rectangle "ValueEstimator" as value_estimator <<support_component>>
+  rectangle "UtilityAssessor" as utility_assessor <<support_component>>
+  rectangle "Curator" as curator <<support_component>>
+  rectangle "GeneralValueFunctionLearner\n(associated interface)" as gvf_learner <<associated_interface>>
+  rectangle "MetaStepSizeLearner\n(optional associated interface)" as meta_step_sizes <<associated_interface>>
 
-  value_function -[hidden]down-> utility_assessor
+  composite_value_function --> value_estimator
+  composite_value_function --> utility_assessor
+  composite_value_function --> curator
+  value_estimator ..> gvf_learner : may own
+  composite_value_function ..> meta_step_sizes : may use
+
+  value_estimator -[hidden]down-> utility_assessor
   utility_assessor -[hidden]down-> curator
-  curator -[hidden]down-> meta_step_sizes
+  curator -[hidden]down-> gvf_learner
+  gvf_learner -[hidden]down-> meta_step_sizes
 }
 
-package "Reactive Policy family" <<family>> {
-  rectangle "reactive_policy" as reactive_policy <<main_component>>
-  rectangle "option_library" as option_library <<support_component>>
-  rectangle "option_learner" as option_learner <<support_component>>
-  rectangle "active_option" as active_option <<support_component>>
+package "ReactivePolicy slot\nimplements ReactivePolicy" as policy_slot <<family>> {
+  rectangle "CompositeReactivePolicy" as composite_reactive_policy <<composite>>
+  rectangle "ActionSelector" as action_selector <<support_component>>
+  rectangle "OptionLibrary" as option_library <<support_component>>
+  rectangle "OptionLearner" as option_learner <<support_component>>
+  rectangle "Option\n(associated interface)" as option <<associated_interface>>
+  rectangle "OptionKeyboard\n(optional associated interface)" as option_keyboard <<associated_interface>>
 
-  reactive_policy -[hidden]down-> option_library
+  composite_reactive_policy --> action_selector
+  composite_reactive_policy --> option_library
+  composite_reactive_policy --> option_learner
+  option_library ..> option : stores / returns
+  option_learner ..> option : exports
+  composite_reactive_policy ..> option_keyboard : optional
+
+  action_selector -[hidden]down-> option_library
   option_library -[hidden]down-> option_learner
-  option_learner -[hidden]down-> active_option
+  option_learner -[hidden]down-> option
+  option -[hidden]down-> option_keyboard
 }
 
-perception -[hidden]right-> planner
-value_function -[hidden]right-> reactive_policy
-perception -[hidden]down-> value_function
-planner -[hidden]down-> reactive_policy
+agent --> composite_perception : perception
+agent --> composite_transition_model : transition_model
+agent --> composite_value_function : value_function
+agent --> composite_reactive_policy : reactive_policy
 
-caller --> time_step
-time_step --> perception : observation,\nreward,\nlast_action
-perception --> subjective_state : encode current state
-
-step_memory --> transition : previous state,\nprevious action
-time_step --> transition : reward,\ntermination
-subjective_state --> transition : next state
-
-subjective_state --> feature_constructor : propose candidates
-feature_bank --> feature_constructor : existing features
-feature_constructor --> feature_bank : add candidates
-feature_bank --> feature_ranker : current features
-utility_assessor --> feature_ranker : utility scores
-feature_ranker --> subtask_generator : ranked features
-subtask_generator --> option_learner : generated subtasks
-
-transition --> value_function : TD / value update
-transition --> reactive_policy : value-informed policy update
-transition --> option_learner : option learning update
-transition --> option_model_learner : option model update
-transition --> transition_model : model learning update
-transition --> meta_step_sizes : adaptation signals
-
-option_learner --> option_library : exported options
-option_model_learner --> transition_model : exported option models
-
-subjective_state --> planner : planning start state
-transition_model --> planner : predictive model
-value_function --> planner : bootstrap values
-planner --> planning_update : planning result
-planning_update --> reactive_policy : planning advice
-
-step_memory --> active_option : current option state
-subjective_state --> active_option : termination / act context
-active_option --> reactive_policy : continue or release control
-option_library --> reactive_policy : available options
-subjective_state --> reactive_policy : decision context
-value_function --> reactive_policy : value feedback
-reactive_policy --> action : primitive action\nor option choice
-
-reactive_policy --> utility_assessor : usage records
-utility_assessor --> curator : utility scores
-curator --> feature_bank : prune / retain
-curator --> option_library : prune / retain
-curator --> value_function : prune / retain
-
-subjective_state --> step_memory : store current state
-action --> step_memory : store chosen action
-time_step --> step_memory : store observation / cleanup
-action --> caller : AgentStepResult.action
+perception_slot -[hidden]right-> transition_slot
+perception_slot -[hidden]down-> value_slot
+transition_slot -[hidden]down-> policy_slot
+value_slot -[hidden]right-> policy_slot
 
 note bottom
-This diagram shows effective call and dependency flow during one step.
-OaKAgent is the central orchestrator of all interactions, but is omitted
-from the middle of the diagram to keep the architecture readable.
+Read this after oak_core.
+This is a slot map of the fine-grained interfaces.
+Solid arrows show the main Composite* wiring.
+Dotted arrows show associated or optional interfaces that exist in the fine_grained layer
+but are not necessarily touched on every step.
+The per-step runtime path is expanded in oak_runtime_sequence.
 end note
 
 @enduml
