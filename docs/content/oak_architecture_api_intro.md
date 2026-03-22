@@ -54,22 +54,22 @@ You also configure scalar controls:
 - `last_action`
 - `last_subjective_state`
 
-Your environment loop does not have to implement `World`, but it must supply
-`TimeStep` objects to `OaKAgent.step(...)`.  `World` is just the package's
-small protocol for one way to do that.
+Your environment must implement the `World` protocol (`reset`, `step`,
+`close`) to use `OaKAgent.train()`.  You can also drive the loop yourself
+by supplying `TimeStep` objects to `OaKAgent.step(...)` directly.
 
 ## Two Ways to Implement
 
-**Direct approach** — implement the four main interfaces directly.  Each of
+**Direct approach**: implement the four main interfaces directly.  Each of
 your classes is a self-contained module.  This is the simplest path and what
-the `examples/minimal_oak.py` example demonstrates.
+the `examples/smoke/minimal_oak.py` example demonstrates.
 
-**Composite approach** — use the fine-grained component interfaces from
+**Composite approach**: use the fine-grained component interfaces from
 `oak_architecture.fine_grained.components` and wire them together using the
 composites from `oak_architecture.fine_grained.composites`.  This is for
 projects that need to independently swap building blocks inside a module
 (e.g. replace the planner without touching the world model).  The
-`examples/minimal_oak_fine_grained.py` example demonstrates this path with
+`examples/smoke/minimal_oak_fine_grained.py` example demonstrates this path with
 the same toy behavior as the direct example.
 
 | Main interface    | Composite class              | Fine-grained building blocks                                                      |
@@ -210,6 +210,38 @@ modules: `perception.remove_features(...)`, `reactive_policy.remove_options(...)
 `reactive_policy.remove_subtasks(...)`, `transition_model.remove_option_models(...)`,
 `value_function.remove(...)`.
 
+## Training Loop
+
+`OaKAgent.train()` provides a standard episode loop so implementations
+don't need to rewrite the reset/step/terminate boilerplate:
+
+```python
+agent = build_my_agent()
+world = MyWorld()          # must implement the World protocol
+
+def log_episode(episode, reward, avg_reward, agent):
+    if episode % 10 == 0:
+        print(f"episode={episode} reward={reward:.1f} avg={avg_reward:.1f}")
+
+rewards = agent.train(
+    world,
+    num_episodes=500,
+    solved_threshold=475.0,  # optional early stopping
+    episode_logger=log_episode,
+)
+world.close()
+```
+
+The `World` protocol requires three methods:
+
+- `reset() -> TimeStep` -- start a new episode
+- `step(action) -> TimeStep` -- advance one step
+- `close() -> None` -- release resources (can be a no-op)
+
+If you need custom per-episode logging, pass `episode_logger(...)`. If you
+need a fully custom training loop (non-episodic environments, multi-agent
+setups, custom control flow), call `agent.step(time_step)` directly instead.
+
 ## Implementation Order
 
 If your goal is to get a working agent quickly, implement in this order:
@@ -233,12 +265,19 @@ wiring.
 The concrete implementations live outside `oak_architecture` on purpose.
 That shows the intended usage pattern: the package provides the canonical
 `OaKAgent` coordinator and interfaces, while downstream code provides the
-implementations.
+implementations.  The generated docs now include the repository-level
+`examples` package alongside the core `oak_architecture` API.
 
-- `examples/minimal_oak.py`
+- `examples/smoke/minimal_oak.py`
   A full smoke-path implementation using the **direct approach**.  Each of
   the four interfaces is implemented as a single class with intentionally
   small behavior.
+- `examples/smoke/minimal_oak_fine_grained.py`
+  The same toy environment built from the fine-grained composite building
+  blocks instead of direct interface implementations.
+- `examples/cartpole/`
+  A fuller learning agent that exercises discovery, perception, planning,
+  value learning, and reactive control together.
 
 To run all repository smoke tests, including the minimal example:
 
@@ -249,7 +288,7 @@ pixi run tests
 To inspect the smallest runnable example directly:
 
 ```python
-from examples.minimal_oak import build_minimal_agent, run_minimal_episode
+from examples import build_minimal_agent, run_minimal_episode
 
 agent = build_minimal_agent()
 trace = run_minimal_episode(horizon=5)

@@ -1,6 +1,42 @@
 {% extends "default/module.html.jinja2" %}
 
+{% block module_list_link %}
+    {% set docs_home = docs_home_module %}
+    {% set parentmodule = ".".join(module.modulename.split(".")[:-1]) %}
+    {% if parentmodule and parentmodule in all_modules %}
+        <a class="pdoc-button module-list-button" href="../{{ parentmodule.split(".")[-1] }}.html">
+            {% include "resources/box-arrow-in-left.svg" %}
+            &nbsp;
+            {{- parentmodule -}}
+        </a>
+    {% elif module.modulename != docs_home %}
+        <a class="pdoc-button module-list-button" href="{{ "../" * module.modulename.count(".") }}{{ docs_home.replace(".", "/") }}.html">
+            {% include "resources/box-arrow-in-left.svg" %}
+            &nbsp;
+            {{- docs_home -}}
+        </a>
+    {% endif %}
+{% endblock %}
+
 {% block nav_index %}
+    {% set nav_root = "../" * module.modulename.count(".") %}
+    {% if sidebar_sections %}
+        {% for section in sidebar_sections %}
+            <h2>{{ section["title"] }}</h2>
+            <ul class="oak-sidebar-nav">
+                {% for item in section["items"] %}
+                    <li>
+                        <a
+                            class="oak-sidebar-link{% if item["module"] == module.modulename %} active{% endif %}"
+                            href="{{ nav_root }}{{ item["module"].replace('.', '/') }}.html"
+                        >
+                            {{ item["label"] }}
+                        </a>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endfor %}
+    {% endif %}
     {{ super() }}
     {% if module.modulename == "oak_architecture" %}
         <h2>Architecture Guide</h2>

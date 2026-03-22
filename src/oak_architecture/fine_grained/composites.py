@@ -21,6 +21,7 @@ from .components import (
     GeneralValueFunctionLearner,
     MetaStepSizeLearner,
     Option,
+    OptionKeyboard,
     OptionLearner,
     OptionLibrary,
     OptionModelLearner,
@@ -39,7 +40,6 @@ from ..interfaces import (
 )
 from ..types import (
     ActionT,
-    ComponentId,
     CurationDecision,
     FeatureId,
     FeatureSpec,
@@ -69,7 +69,8 @@ class CompositePerception(
     """Perception built from fine-grained components.
 
     Components: `StateBuilder`, `FeatureBank`, `FeatureConstructor`,
-    `FeatureRanker`, `SubtaskGenerator`.
+    `FeatureRanker`, `SubtaskGenerator`, and optionally
+    `MetaStepSizeLearner`.
     """
 
     def __init__(
@@ -79,12 +80,14 @@ class CompositePerception(
         feature_constructor: FeatureConstructor[SubjectiveStateT],
         feature_ranker: FeatureRanker,
         subtask_generator: SubtaskGenerator[SubjectiveStateT],
+        meta_step_sizes: MetaStepSizeLearner | None = None,
     ) -> None:
         self._state_builder = state_builder
         self._feature_bank = feature_bank
         self._feature_constructor = feature_constructor
         self._feature_ranker = feature_ranker
         self._subtask_generator = subtask_generator
+        self._meta_step_sizes = meta_step_sizes
 
     def reset(self) -> None:
         self._state_builder.reset()
@@ -127,6 +130,10 @@ class CompositePerception(
     def remove_features(self, feature_ids: Sequence[FeatureId]) -> None:
         self._feature_bank.remove(feature_ids)
 
+    def update_meta(self, error_signals: Mapping[str, float]) -> None:
+        if self._meta_step_sizes is not None:
+            self._meta_step_sizes.update(error_signals)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # CompositeValueFunction
@@ -159,10 +166,7 @@ class CompositeValueFunction(
         self,
         transition: Transition[ActionT, SubjectiveStateT, InfoT],
     ) -> Mapping[GeneralValueFunctionId, float]:
-        td_errors = self._value_estimator.update(transition)
-        self.update_meta("value_functions", td_errors)
-        self.update_meta("transition_model", {"reward": transition.reward})
-        return td_errors
+        return self._value_estimator.update(transition)
 
     def predict(
         self,
@@ -188,13 +192,9 @@ class CompositeValueFunction(
     ) -> None:
         self._value_estimator.remove(general_value_function_ids)
 
-    def update_meta(
-        self,
-        component_id: ComponentId,
-        error_signals: Mapping[str, float],
-    ) -> None:
+    def update_meta(self, error_signals: Mapping[str, float]) -> None:
         if self._meta_step_sizes is not None:
-            self._meta_step_sizes.update(component_id, error_signals)
+            self._meta_step_sizes.update(error_signals)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -255,7 +255,8 @@ class CompositeTransitionModel(
 ):
     """TransitionModel built from fine-grained components.
 
-    Components: `WorldModel`, `OptionModelLearner`, `Planner`.
+    Components: `WorldModel`, `OptionModelLearner`, `Planner`, and
+    optionally `MetaStepSizeLearner`.
     """
 
     def __init__(
@@ -263,10 +264,12 @@ class CompositeTransitionModel(
         world_model: WorldModel[SubjectiveStateT, ActionT, InfoT],
         option_model_learner: OptionModelLearner[SubjectiveStateT, ActionT, InfoT],
         planner: Planner[SubjectiveStateT, ActionT, InfoT],
+        meta_step_sizes: MetaStepSizeLearner | None = None,
     ) -> None:
         self._world_model = world_model
         self._option_model_learner = option_model_learner
         self._planner = planner
+        self._meta_step_sizes = meta_step_sizes
 
     def update(
         self,
@@ -293,6 +296,10 @@ class CompositeTransitionModel(
     def remove_option_models(self, option_ids: Sequence[OptionId]) -> None:
         self._world_model.remove_option_models(option_ids)
 
+    def update_meta(self, error_signals: Mapping[str, float]) -> None:
+        if self._meta_step_sizes is not None:
+            self._meta_step_sizes.update(error_signals)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # CompositeReactivePolicy
@@ -305,7 +312,8 @@ class CompositeReactivePolicy(
 ):
     """ReactivePolicy built from fine-grained components.
 
-    Components: `ActionSelector`, `OptionLibrary`, `OptionLearner`.
+    Components: `ActionSelector`, `OptionLibrary`, `OptionLearner`,
+    and optionally `OptionKeyboard` and `MetaStepSizeLearner`.
     """
 
     def __init__(
@@ -313,10 +321,14 @@ class CompositeReactivePolicy(
         action_selector: ActionSelector[SubjectiveStateT, ActionT],
         option_library: OptionLibrary[SubjectiveStateT, ActionT],
         option_learner: OptionLearner[SubjectiveStateT, ActionT, InfoT],
+        option_keyboard: OptionKeyboard | None = None,
+        meta_step_sizes: MetaStepSizeLearner | None = None,
     ) -> None:
         self._action_selector = action_selector
         self._option_library = option_library
         self._option_learner = option_learner
+        self._option_keyboard = option_keyboard
+        self._meta_step_sizes = meta_step_sizes
         self._active_option: Option[SubjectiveStateT, ActionT] | None = None
 
     def update(
@@ -359,6 +371,18 @@ class CompositeReactivePolicy(
             available_options=self._option_library.list_options(),
         )
 
+        # Option composition via the keyboard: the ActionSelector may
+        # place per-option intensities in metadata["option_intensities"]
+        # to request blended behaviour rather than a single option.
+        intensities = decision.metadata.get("option_intensities")
+        if intensities is not None and self._option_keyboard is not None:
+            descriptor = self._option_keyboard.compose(intensities)
+            self._active_option = self._option_library.get(descriptor.option_id)
+            return (
+                self._active_option.act(subjective_state),
+                descriptor.option_id,
+            )
+
         if decision.option_id is not None:
             self._active_option = self._option_library.get(decision.option_id)
             return (
@@ -386,3 +410,7 @@ class CompositeReactivePolicy(
 
     def remove_subtasks(self, subtask_ids: Sequence[SubtaskId]) -> None:
         self._option_learner.remove_subtasks(subtask_ids)
+
+    def update_meta(self, error_signals: Mapping[str, float]) -> None:
+        if self._meta_step_sizes is not None:
+            self._meta_step_sizes.update(error_signals)

@@ -7,7 +7,7 @@ OaK interfaces (`Perception`, `TransitionModel`, `ValueFunction`,
 `ReactivePolicy`) using the composites in
 `oak_architecture.fine_grained.composites`.
 
-You do **not** need these to build an OaK agent — implementing the four
+You do **not** need these to build an OaK agent; implementing the four
 main interfaces directly is simpler and sufficient.  These components exist
 for projects that need to independently swap one piece inside a module
 (e.g. replace the planner without touching the world model).
@@ -20,14 +20,17 @@ Main interface        Component building blocks
 ====================  ==================================================
 `Perception`        `StateBuilder`, `FeatureBank`,
                       `FeatureConstructor`, `FeatureRanker`,
-                      `SubtaskGenerator`
+                      `SubtaskGenerator`,
+                      `MetaStepSizeLearner` (optional)
 `TransitionModel`   `WorldModel`, `OptionModel`,
-                      `OptionModelLearner`, `Planner`
+                      `OptionModelLearner`, `Planner`,
+                      `MetaStepSizeLearner` (optional)
 `ValueFunction`     `ValueEstimator`, `GeneralValueFunctionLearner`,
                       `UtilityAssessor`, `Curator`,
-                      `MetaStepSizeLearner`
+                      `MetaStepSizeLearner` (optional)
 `ReactivePolicy`    `ActionSelector`, `Option`, `OptionLibrary`,
-                      `OptionLearner`, `OptionKeyboard`
+                      `OptionLearner`, `OptionKeyboard`,
+                      `MetaStepSizeLearner` (optional)
 ====================  ==================================================
 """
 
@@ -40,7 +43,6 @@ from typing import (
 
 from ..types import (
     ActionT,
-    ComponentId,
     CurationDecision,
     FeatureCandidate,
     FeatureId,
@@ -106,6 +108,12 @@ class FeatureBank(ABC, Generic[SubjectiveStateT]):
         self,
         subjective_state: SubjectiveStateT,
     ) -> Mapping[FeatureId, float]:
+        """Return per-feature activation values for the given state.
+
+        Intended for `SubtaskGenerator` implementations, which receive
+        the `FeatureBank` and may use activations to decide which
+        features warrant new subtasks.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -284,6 +292,12 @@ class ValueEstimator(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     def list_general_value_functions(
         self,
     ) -> Sequence[GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]]:
+        """Return all managed GVF learners.
+
+        Intended for `Planner` implementations that need to inspect
+        the GVF bank (e.g., to evaluate auxiliary predictions during
+        planning).
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -302,6 +316,11 @@ class ValueEstimator(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     def add_or_replace(
         self, learner: GeneralValueFunctionLearner[SubjectiveStateT, ActionT, InfoT]
     ) -> None:
+        """Add or replace a GVF learner in the bank.
+
+        Used for dynamic GVF management, e.g., creating new GVFs when
+        new subtasks or options are discovered.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -332,16 +351,21 @@ class Curator(ABC):
 
 
 class MetaStepSizeLearner(ABC):
-    """Tracks or adapts per-component step-size metadata."""
+    """Adapts per-weight step sizes using meta-gradient methods.
+
+    Implementations may use IDBD (Sutton 1992), Adam-IDBD
+    (Degris et al. 2024), or other online cross-validation algorithms.
+    Each learned weight in the target module gets a dedicated step-size
+    parameter adapted by this learner.
+
+    The agent loop passes error signals (TD errors, reward, etc.) to
+    each module's `update_meta()`; composite implementations delegate
+    to this learner.
+    """
 
     @abstractmethod
-    def update(
-        self, component_id: ComponentId, error_signals: Mapping[str, float]
-    ) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def step_sizes(self, component_id: ComponentId) -> Mapping[str, float]:
+    def update(self, error_signals: Mapping[str, float]) -> None:
+        """Receive error signals and adapt per-weight step sizes."""
         raise NotImplementedError
 
 
@@ -360,6 +384,11 @@ class Option(ABC, Generic[SubjectiveStateT, ActionT]):
 
     @abstractmethod
     def is_available(self, subjective_state: SubjectiveStateT) -> bool:
+        """Whether this option can be initiated in the given state.
+
+        Intended for `ActionSelector` implementations, which receive
+        available options and may filter by initiation conditions.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -442,8 +471,19 @@ class ActionSelector(ABC, Generic[SubjectiveStateT, ActionT]):
 
 
 class OptionKeyboard(ABC):
-    """Optional composition interface for combining options."""
+    """Composes multiple options into a single blended behavior.
+
+    Named after Sutton's analogy: each option is a key on a keyboard,
+    and playing a "chord" (setting per-option intensities) produces a
+    composed temporal abstraction.  The `ActionSelector` determines
+    the intensities, then the keyboard produces a new option descriptor
+    representing the blended behavior.
+
+    Used by `CompositeReactivePolicy` when an `ActionSelector`
+    returns a `PolicyDecision` with `option_intensities` set.
+    """
 
     @abstractmethod
     def compose(self, intensities: Sequence[float]) -> OptionDescriptor:
+        """Blend options according to *intensities* and return the result."""
         raise NotImplementedError

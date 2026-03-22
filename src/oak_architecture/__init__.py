@@ -1,6 +1,7 @@
 from .agent import OaKAgent
 from . import fine_grained
 from .interfaces import (
+    ContinualLearner,
     Perception,
     ReactivePolicy,
     TransitionModel,
@@ -26,6 +27,8 @@ from .types import (
 )
 
 __all__ = [
+    # ── Continual-learning mixin ──
+    "ContinualLearner",
     # ── The four main OaK interfaces ──
     "Perception",
     "TransitionModel",

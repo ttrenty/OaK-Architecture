@@ -4,6 +4,8 @@ node_modules/
 docs/api/
 docs/img/*
 !docs/img/.gitkeep
+.vscode/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

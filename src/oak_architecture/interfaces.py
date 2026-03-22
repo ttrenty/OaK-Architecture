@@ -9,10 +9,10 @@ Policy.
 An `OaKAgent` is composed of exactly these four objects.  Each interface
 captures one of Sutton's architectural roles:
 
-- `Perception` — raw observations → subjective state, features, subtasks.
-- `ValueFunction` — value learning, utility assessment, curation.
-- `TransitionModel` — world dynamics, option models, planning.
-- `ReactivePolicy` — action selection, options, option learning.
+- `Perception`: raw observations → subjective state, features, subtasks.
+- `ValueFunction`: value learning, utility assessment, curation.
+- `TransitionModel`: world dynamics, option models, planning.
+- `ReactivePolicy`: action selection, options, option learning.
 
 To build an OaK agent, implement these four interfaces and pass them to
 `OaKAgent`.  For finer-grained control, see
@@ -32,7 +32,6 @@ from typing import (
 
 from .types import (
     ActionT,
-    ComponentId,
     CurationDecision,
     FeatureId,
     FeatureSpec,
@@ -63,11 +62,51 @@ class World(Protocol[ObservationT, ActionT, InfoT]):
     A `World` may wrap a simulator, a benchmark environment, or a custom
     continual data source.  The protocol is intentionally small so the
     package does not depend on a specific environment library.
+
+    Implement this protocol for any environment you want to use with
+    `OaKAgent.train()`.
     """
 
     def reset(self) -> TimeStep[ObservationT, InfoT]: ...
 
     def step(self, action: ActionT) -> TimeStep[ObservationT, InfoT]: ...
+
+    def close(self) -> None:
+        """Release environment resources.  Default is a no-op."""
+        ...
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Continual-learning mixin (meta-learned step sizes)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class ContinualLearner:
+    """Mixin for modules whose weights are adapted by meta-learned step sizes.
+
+    In Sutton's OaK architecture, every learned weight has a dedicated
+    step-size parameter adapted via online cross-validation (e.g. IDBD,
+    Sutton 1992; Adam-IDBD, Degris et al. 2024).
+
+    The agent loop calls `update_meta()` on all four modules after each
+    learning step, passing the same error-signals dict.  Each module
+    internally decides which signals are relevant and routes them to its
+    per-weight step-size adaptation.
+
+    The default implementation is a no-op so that modules without
+    meta-learning still work unchanged.
+    """
+
+    def update_meta(self, error_signals: Mapping[str, float]) -> None:
+        """Adapt internal per-weight step sizes given error signals.
+
+        Parameters
+        ----------
+        error_signals:
+            Named scalar error signals from the current learning step,
+            e.g. `{"main_td_error": 0.05, "reward": 1.0}`.
+            Implementations pick the signals they need and ignore the rest.
+        """
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -75,21 +114,20 @@ class World(Protocol[ObservationT, ActionT, InfoT]):
 # ─────────────────────────────────────────────────────────────────────
 
 
-class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
+class Perception(
+    ContinualLearner, ABC, Generic[ObservationT, ActionT, SubjectiveStateT]
+):
     """Sutton's Perception: observations → subjective state + feature management.
 
-    Responsible for:
+    Turns raw observations into the agent's **subjective state**, the
+    internal representation that every other module sees.  Also discovers,
+    ranks, and manages **features** (learned representational structures
+    that grow over the agent's lifetime) and generates **subtasks** from
+    the most useful ones.
 
-    1. Turning raw observations into the agent's **subjective state** — the
-       internal representation that every other module sees.
-    2. Discovering, ranking, and managing **features** — the learned
-       representational structures that grow over the agent's lifetime.
-    3. Generating **subtasks** from the most useful features.
-
-    This encompasses what finer-grained designs split into a
-    `StateBuilder`, `FeatureBank`, `FeatureConstructor`,
-    `FeatureRanker`, and `SubtaskGenerator`
-    (see `oak_architecture.fine_grained.components`).
+    The finer-grained layer splits this into `StateBuilder`,
+    `FeatureBank`, `FeatureConstructor`, `FeatureRanker`, and
+    `SubtaskGenerator` (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
@@ -149,22 +187,18 @@ class Perception(ABC, Generic[ObservationT, ActionT, SubjectiveStateT]):
         raise NotImplementedError
 
 
-class ValueFunction(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
+class ValueFunction(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Sutton's Value Function: value learning + utility assessment + curation.
 
-    Responsible for:
+    Learns **predictive value signals** (TD errors, GVF predictions) from
+    observed transitions and predicts cumulative signals for any given
+    subjective state.  Also assesses the **utility** of the agent's learned
+    structures (features, options, models) and produces concrete keep/drop
+    **curation** decisions.
 
-    1. Learning **predictive value signals** (TD errors, GVF predictions)
-       from observed transitions.
-    2. **Predicting** cumulative signals for any given subjective state.
-    3. Assessing the **utility** of the agent's learned structures (features,
-       options, models) to decide what is worth keeping.
-    4. **Curating** — producing concrete keep/drop decisions based on utility.
-
-    This encompasses what finer-grained designs split into a
-    `ValueEstimator`, `GeneralValueFunctionLearner`,
-    `UtilityAssessor`, `Curator`, and `MetaStepSizeLearner`
-    (see `oak_architecture.fine_grained.components`).
+    The finer-grained layer splits this into `ValueEstimator`,
+    `GeneralValueFunctionLearner`, `UtilityAssessor`, `Curator`, and
+    `MetaStepSizeLearner` (see `oak_architecture.fine_grained.components`).
     """
 
     @abstractmethod
@@ -206,26 +240,16 @@ class ValueFunction(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
         """Remove value functions by ID (called during curation)."""
         raise NotImplementedError
 
-    def update_meta(
-        self,
-        component_id: ComponentId,
-        error_signals: Mapping[str, float],
-    ) -> None:
-        """Update meta step-size information.  Default is a no-op."""
 
-
-class TransitionModel(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
+class TransitionModel(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Sutton's Transition Model: world dynamics + option models + planning.
 
-    Responsible for:
+    Learns from observed transitions, maintains **option models** that
+    predict the effect of temporal abstractions, and runs bounded
+    **planning** using the world model and the value function to produce
+    improvement signals for the reactive policy.
 
-    1. **Learning** from observed transitions to improve its predictions.
-    2. Maintaining **option models** that predict the effect of temporal
-       abstractions.
-    3. Running bounded **planning** using the world model and the value
-       function, producing improvement signals for the reactive policy.
-
-    This encompasses what finer-grained designs split into a `WorldModel`,
+    The finer-grained layer splits this into `WorldModel`,
     `OptionModelLearner`, individual `OptionModel` objects, and a
     `Planner` (see `oak_architecture.fine_grained.components`).
     """
@@ -270,19 +294,16 @@ class TransitionModel(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
         raise NotImplementedError
 
 
-class ReactivePolicy(ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
+class ReactivePolicy(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, InfoT]):
     """Sutton's Reactive Policy: action selection + option management.
 
-    Responsible for:
+    Selects **actions**, primitive or temporal abstractions (options),
+    based on the current subjective state.  Manages the **option library**
+    and **option learning** pipeline, and integrates **planning updates**
+    into decision-making.
 
-    1. **Selecting actions** — either primitive actions or temporal
-       abstractions (options) — based on the current subjective state.
-    2. Managing the **option library** and **option learning** pipeline.
-    3. Integrating **planning updates** and **value signals** into
-       decision-making.
-
-    This encompasses what finer-grained designs split into an
-    `ActionSelector`, `OptionLibrary`, and `OptionLearner`
+    The finer-grained layer splits this into `ActionSelector`,
+    `OptionLibrary`, and `OptionLearner`
     (see `oak_architecture.fine_grained.components`).
     """
 
