@@ -109,6 +109,15 @@ html.theme-dark .theme-toggle-thumb {
     background: linear-gradient(135deg, #edf4ff, #bfd5ff);
 }
 
+.oak-sidebar-nav {
+    margin-bottom: 1.1rem;
+}
+
+.oak-sidebar-link.active {
+    font-weight: 700;
+    color: var(--link);
+}
+
 .docstring .oak-diagram-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));

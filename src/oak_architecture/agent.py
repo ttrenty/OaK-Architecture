@@ -3,30 +3,31 @@ from __future__ import annotations
 """Reference agent wiring for the OaK architecture.
 
 `OaKAgent` is the runtime coordinator.  It composes the four OaK
-interfaces — Perception, Transition Model, Value Function, and Reactive
-Policy — and defines the order in which they are called during one
+interfaces (Perception, Transition Model, Value Function, and Reactive
+Policy) and defines the order in which they are called during one
 temporally uniform step.
 
 At a high level, one `step(...)` call follows six phases:
 
-1. **Perceive** — update perception to obtain the current subjective state.
-2. **Learn** — if a previous state/action exists, update all modules from
+1. **Perceive**: update perception to obtain the current subjective state.
+2. **Learn**: if a previous state/action exists, update all modules from
    the observed transition.
-3. **Grow** — discover and rank features, generate subtasks, integrate
+3. **Grow**: discover and rank features, generate subtasks, integrate
    new options and option models.
-4. **Plan** — run bounded planning and inform the reactive policy responsible for action selection.
-5. **Act** — select the next primitive action.
-6. **Maintain** — record utility evidence and apply curation decisions.
+4. **Plan**: run bounded planning and inform the reactive policy responsible for action selection.
+5. **Act**: select the next primitive action.
+6. **Maintain**: record utility evidence and apply curation decisions.
 """
 
 from dataclasses import dataclass
-from typing import Generic, Sequence
+from typing import Callable, Generic, Self, Sequence
 
 from .interfaces import (
     Perception,
     ReactivePolicy,
     TransitionModel,
     ValueFunction,
+    World,
 )
 from .types import (
     ActionT,
@@ -138,6 +139,14 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
             self.reactive_policy.update(transition, td_errors)
             self.transition_model.update(transition)
 
+            # Meta step-size adaptation (Sutton's IDBD / online cross-validation)
+            meta_signals = dict(td_errors)
+            meta_signals["reward"] = transition.reward
+            self.perception.update_meta(meta_signals)
+            self.value_function.update_meta(meta_signals)
+            self.reactive_policy.update_meta(meta_signals)
+            self.transition_model.update_meta(meta_signals)
+
         # ================== 3. Grow ================== #
         ranked_feature_ids = self.perception.discover_and_rank_features(
             subjective_state,
@@ -186,6 +195,77 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
             created_subtasks=created_subtasks,
             curation_decision=curation_decision,
         )
+
+    # ── training loop ─────────────────────────────────────────────────
+
+    def train(
+        self,
+        world: World[ObservationT, ActionT, InfoT],
+        *,  # enforce keyword arguments after for clarity
+        num_episodes: int = 500,
+        average_window: int = 100,
+        solved_threshold: float | None = None,
+        episode_logger: Callable[[int, float, float, Self], None] | None = None,
+    ) -> list[float]:
+        """Run the standard OaK episode loop on the given world.
+
+        Parameters
+        ----------
+        world:
+            An environment implementing the `World` protocol.
+        num_episodes:
+            Maximum number of training episodes.
+        average_window:
+            Number of recent episodes to average for performance tracking.
+        solved_threshold:
+            If set, stop early when the average reward over the last `average_window`
+            episodes reaches this value.
+        episode_logger:
+            Optional callback `(episode, episode_reward, avg_reward, agent)`
+            called after each episode. Use this to own all per-episode logging
+            or other training-side effects at the call site.
+
+        Returns
+        -------
+        list[float]
+            Per-episode reward history.
+        """
+        if average_window < 1:
+            raise ValueError("average_window must be at least 1.")
+
+        reward_history: list[float] = []
+
+        for episode in range(num_episodes):
+            time_step = world.reset()
+            self.reset()
+            episode_reward = 0.0
+
+            while True:
+                result = self.step(time_step)
+
+                if time_step.terminated or time_step.truncated:
+                    break
+
+                time_step = world.step(result.action)
+                episode_reward += time_step.reward
+
+            reward_history.append(episode_reward)
+            recent_window = reward_history[-average_window:]
+            avg_reward = sum(recent_window) / len(recent_window)
+
+            solved = (
+                solved_threshold is not None
+                and len(reward_history) >= average_window
+                and avg_reward >= solved_threshold
+            )
+
+            if episode_logger is not None:
+                episode_logger(episode, episode_reward, avg_reward, self)
+
+            if solved:
+                break
+
+        return reward_history
 
     # ── private helpers ──────────────────────────────────────────────
 
