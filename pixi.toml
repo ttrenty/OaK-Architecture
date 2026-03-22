@@ -1,7 +1,7 @@
 [workspace]
 channels = ["conda-forge"]
 name = "OaK-Architecture"
-platforms = ["linux-64"]
+platforms = ["linux-64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks.build_package]
@@ -111,11 +111,9 @@ outputs = ["environment.yml"]
 [tasks.clean]
 cmd = "rm -rf dist build docs/api src/oak_architecture.egg-info src/oak_architecture/__pycache__ examples/__pycache__ docs/tools/__pycache__"
 
-[pypi-options]
-extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
-
+# shared dependencies
 [dependencies]
-python = ">=3.14.3,<3.15"
+python = ">=3.13,<3.14"
 setuptools = ">=80,<81"
 openjdk = ">=25.0.2,<26"
 graphviz = ">=14.1.2,<15"
@@ -125,6 +123,30 @@ pip = ">=25.2,<26"
 [pypi-dependencies]
 build = ">=1.3.0,<2"
 pdoc = ">=15.0.4,<16"
-gymnasium = ">=1.2.3, <2"
+gymnasium = ">=1.2.3,<2"
+
+# macOS feature: regular PyTorch from PyPI
+[feature.macos]
+platforms = ["osx-arm64"]
+
+[feature.macos.pypi-dependencies]
 torch = ">=2.10,<2.11"
 torchvision = ">=0.25,<0.26"
+
+# Linux GPU feature: CUDA wheel index + CUDA-specific torch
+[feature.linux-gpu]
+platforms = ["linux-64"]
+
+[feature.linux-gpu.system-requirements]
+cuda = "13.0"
+
+[feature.linux-gpu.pypi-options]
+extra-index-urls = ["https://download.pytorch.org/whl/cu130"]
+
+[feature.linux-gpu.pypi-dependencies]
+torch = "==2.10.0+cu130"
+torchvision = "==0.25.0+cu130"
+
+[environments]
+macos = { features = ["macos"] }
+linux-gpu = { features = ["linux-gpu"] }
