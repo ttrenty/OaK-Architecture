@@ -8,7 +8,7 @@ instantiated and run through a complete OaK step loop?
 The implementation shows the **direct** approach: each of Sutton's four
 modules (Perception, Transition Model, Value Function, Reactive Policy) is
 implemented as a single class.  There is no need to use the fine-grained
-component interfaces or the composite wrappers — those exist for projects
+component interfaces or the composite wrappers, which exist for projects
 that need more modularity inside each module.
 
 What this module is:
@@ -107,6 +107,9 @@ class MinimalWorld(World[Observation, Action, MinimalInfo]):
             terminated=terminated,
             info={"echo_action": action},
         )
+
+    def close(self) -> None:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -217,9 +220,7 @@ class MinimalTransitionModel(
     def plan(
         self,
         subjective_state: MinimalSubjectiveState,
-        value_function: ValueFunction[
-            MinimalSubjectiveState, Action, MinimalInfo
-        ],
+        value_function: ValueFunction[MinimalSubjectiveState, Action, MinimalInfo],
         budget: int,
     ) -> PlanningUpdate[Action]:
         return PlanningUpdate(
@@ -237,9 +238,7 @@ class MinimalTransitionModel(
 # ─────────────────────────────────────────────────────────────────────
 
 
-class MinimalValueFunction(
-    ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]
-):
+class MinimalValueFunction(ValueFunction[MinimalSubjectiveState, Action, MinimalInfo]):
     """Stores latest reward as a value, counts usage, never curates.
 
     - One implicit value learner ("main") that stores the latest reward.
@@ -459,3 +458,24 @@ def run_minimal_episode(horizon: int = 5) -> list[MinimalTraceStep]:
             break
 
     return trace
+
+
+def run_minimal_training(
+    num_episodes: int = 3,
+    *,
+    horizon: int = 5,
+    average_window: int = 100,
+    solved_threshold: float | None = None,
+) -> list[float]:
+    """Train the minimal smoke agent for a few episodes and return rewards."""
+    world = MinimalWorld(horizon=horizon)
+    agent = build_minimal_agent()
+    try:
+        return agent.train(
+            world,
+            num_episodes=num_episodes,
+            average_window=average_window,
+            solved_threshold=solved_threshold,
+        )
+    finally:
+        world.close()

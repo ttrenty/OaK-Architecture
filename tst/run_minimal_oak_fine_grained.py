@@ -8,7 +8,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from examples.minimal_oak_fine_grained import build_minimal_agent, run_minimal_episode
+from examples.smoke.minimal_oak_fine_grained import (
+    build_minimal_agent,
+    run_minimal_episode,
+)
 from oak_architecture import OaKAgent
 
 
