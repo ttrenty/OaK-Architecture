@@ -76,9 +76,7 @@ from .minimal_oak import (
 # ─────────────────────────────────────────────────────────────────────
 
 
-class MinimalStateBuilder(
-    StateBuilder[Observation, Action, MinimalSubjectiveState]
-):
+class MinimalStateBuilder(StateBuilder[Observation, Action, MinimalSubjectiveState]):
     """Direct observation-to-state mapping."""
 
     def __init__(self) -> None:

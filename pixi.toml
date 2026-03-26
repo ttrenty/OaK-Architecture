@@ -76,6 +76,11 @@ OAK_RUN_LLM_CONNECTION_TEST=1 python tst/test_llm_connection.py
 '
 """
 
+# Use it with: `pixi run typecheck <path>`
+[tasks.typecheck]
+args = ["target"]
+cmd = "mypy --ignore-missing-imports --show-error-codes {{ target }}"
+
 [tasks._render_plantuml]
 cmd = "rm -f docs/diagrams/oak_core.svg docs/diagrams/oak_architecture.svg docs/diagrams/oak_runtime_overview.svg docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_core.svg docs/api/img/oak_architecture.svg docs/api/img/oak_runtime_overview.svg docs/api/img/oak_runtime_sequence.svg && mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_overview.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_overview.svg docs/api/img/oak_runtime_overview.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
 inputs = ["docs/diagrams/**/*.puml"]
@@ -124,6 +129,7 @@ pip = ">=25.2,<26"
 build = ">=1.3.0,<2"
 pdoc = ">=15.0.4,<16"
 gymnasium = ">=1.2.3,<2"
+mypy = ">=1.15,<2"
 
 # macOS feature: regular PyTorch from PyPI
 [feature.macos]
