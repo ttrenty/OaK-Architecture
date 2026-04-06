@@ -18,8 +18,8 @@ from typing import Any, Callable, Protocol, cast
 
 import torch
 
-from oak_architecture.agent import OaKAgent
-from oak_architecture.interfaces import World
+from oak.agent import OaKAgent
+from oak.interfaces import World
 
 from .encoders import create_encoder
 from .perception import AdaptivePerception

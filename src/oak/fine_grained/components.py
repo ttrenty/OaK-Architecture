@@ -5,7 +5,7 @@ from __future__ import annotations
 These are optional building blocks that can be composed into the four main
 OaK interfaces (`Perception`, `TransitionModel`, `ValueFunction`,
 `ReactivePolicy`) using the composites in
-`oak_architecture.fine_grained.composites`.
+`oak.fine_grained.composites`.
 
 You do **not** need these to build an OaK agent; implementing the four
 main interfaces directly is simpler and sufficient.  These components exist

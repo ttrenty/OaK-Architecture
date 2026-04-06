@@ -4,7 +4,7 @@ from __future__ import annotations
 
 This mirrors `examples/minimal_oak.py`, but instead of implementing the four
 main OaK interfaces directly, it assembles them from the optional fine-grained
-building blocks in `oak_architecture.fine_grained`.
+building blocks in `oak.fine_grained`.
 
 The behavior is intentionally the same as the direct example:
 
@@ -19,8 +19,8 @@ The behavior is intentionally the same as the direct example:
 from dataclasses import dataclass
 from typing import Mapping, Sequence
 
-from oak_architecture.agent import OaKAgent
-from oak_architecture.fine_grained import (
+from oak.agent import OaKAgent
+from oak.fine_grained import (
     ActionSelector,
     CompositePerception,
     CompositeReactivePolicy,
@@ -43,7 +43,7 @@ from oak_architecture.fine_grained import (
     ValueEstimator,
     WorldModel,
 )
-from oak_architecture.types import (
+from oak.types import (
     CurationDecision,
     FeatureCandidate,
     FeatureId,
@@ -68,6 +68,7 @@ from .minimal_oak import (
     MinimalTraceStep,
     MinimalWorld,
     Observation,
+    _planning_budget_used,
 )
 
 
@@ -529,11 +530,7 @@ def run_minimal_episode(horizon: int = 5) -> list[MinimalTraceStep]:
                 "created_subtasks": [
                     subtask.subtask_id for subtask in result.created_subtasks
                 ],
-                "planning_budget_used": (
-                    int(result.planning_update.search_statistics["budget_used"])
-                    if result.planning_update is not None
-                    else None
-                ),
+                "planning_budget_used": _planning_budget_used(result.planning_update),
             }
         )
         step = world.step(action)

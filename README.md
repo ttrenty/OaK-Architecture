@@ -1,7 +1,10 @@
 # OaK Architecture
 
-`oak-architecture` is an interface-first Python package for experimenting with
-the OaK architecture vision associated with Richard Sutton.
+`oakagent` is an interface-first Python package for experimenting with
+the OaK architecture vision of Richard Sutton ([http://incompleteideas.net/](http://incompleteideas.net/)).
+
+Install the published distribution with `pip install oakagent`, then import it
+in code as `import oak`.
 
 The repository focuses on two things:
 
@@ -25,7 +28,7 @@ The package exposes **two abstraction levels**:
 - the default **four-interface layer:** `OaKAgent` plus the four main OaK interfaces:
   `Perception`, `TransitionModel`, `ValueFunction`, and `ReactivePolicy`.
   This is the simplest way to use the package and the main conceptual surface.
-- the optional **fine-grained layer:** `oak_architecture.fine_grained`, which breaks those four slots into smaller
+- the optional **fine-grained layer:** `oak.fine_grained`, which breaks those four slots into smaller
   building blocks and provides `Composite*` implementations for wiring them
   back into the main agent.
 
@@ -42,20 +45,21 @@ This repository currently provides:
 - abstract interfaces for the four main OaK components
 - a `World` protocol that environments must implement for use with
   `OaKAgent.train()`
-- an optional `oak_architecture.fine_grained` submodule with lower-level
+- an optional `oak.fine_grained` submodule with lower-level
   building blocks and `Composite*` implementations
 - the package's official `OaKAgent` coordinator that wires those components
   together, including a built-in `train()` method for running the standard
   episode loop on any `World`
 - two minimal external example implementations used as smoke tests:
   one direct and one fine-grained
-- a full learning agent applied to CartPole that exercises all OaK machinery
+- a full learning agent example for RL worlds, demonstrated on CartPole
   (see below)
 
-## CartPole example
+## Example 01
 
-`examples/cartpole/` contains a full OaK agent that learns to solve
-CartPole-v1 using all four interfaces. It demonstrates the entire OaK
+`examples/example_01/` contains the first full OaK agent example for reinforcement-learning
+worlds. CartPole-v1 is the bundled sample world, but the implementation is
+not named after any specific environment. It demonstrates the entire OaK
 lifecycle: discovery, LLM-augmented perception, Option-Critic temporal
 abstraction, Dyna-Q model-based planning, GVF auxiliary predictions, and
 utility-based curation.
@@ -69,24 +73,28 @@ The config mode is chosen automatically based on the world you pass in:
 
 | World class | Config source | Discovery? | LLM? |
 |---|---|---|---|
-| `CartPoleWorld` (no `description`) | Trial-and-error probing | Yes | Optional |
-| `DescribedCartPoleWorld` (has `description`) | `WorldDescription` attribute | No | No |
+| `GymWorld("CartPole-v1")` (no `description`) | Trial-and-error probing | Yes | Optional |
+| `DescribedGymWorld("CartPole-v1")` (has `description`) | `WorldDescription` attribute | No | No |
 
 ```python
-from examples.cartpole import CartPoleWorld, DescribedCartPoleWorld, run_training
+from examples.example_01 import DescribedGymWorld, GymWorld, run_training
 
 # Discovery mode: agent discovers everything through trial-and-error
-run_training(CartPoleWorld(), num_episodes=1000, solved_threshold=475.0)
+run_training(GymWorld("CartPole-v1"), num_episodes=1000, solved_threshold=475.0)
 
-# Embedded mode: world description provides obs/action metadata directly
-run_training(DescribedCartPoleWorld(), num_episodes=1000, solved_threshold=475.0)
+# Described mode: world description provides obs/action metadata directly
+run_training(
+    DescribedGymWorld("CartPole-v1"),
+    num_episodes=1000,
+    solved_threshold=475.0,
+)
 ```
 
 **Discovery mode** (world without `description`): the agent probes the
 world with trial-and-error actions to discover observation type/shape and the
 action space, then optionally consults an LLM for feature analysis.
 
-**Embedded mode** (world with `description`): observation shape, action count,
+**Described mode** (world with `description`): observation shape, action count,
 encoder type, and feature descriptions are read directly from the world's
 `WorldDescription`.  This skips discovery and LLM calls entirely, making
 startup instant and training deterministic from step one.
@@ -103,20 +111,23 @@ startup instant and training deterministic from step one.
 3. **Train**: call ``agent.train(world)`` which runs the standard OaK 6-phase
    step loop (perceive, learn, grow, plan, act, maintain) for the configured
    number of episodes. The world must implement the ``World`` protocol from
-   ``oak_architecture.interfaces``.
+   ``oak.interfaces``.
 
 ### Running
 
 ```bash
-# Discovery mode (1000 episodes)
-pixi run python tst/run_cartpole.py
+# Smoke-only checks in the default environment
+pixi run tests
 
-# Embedded mode (no discovery, no LLM)
-pixi run python tst/run_cartpole_embedded.py
+# Example 01 CartPole runners require a torch-enabled environment.
+# Use `linux-gpu` on Linux GPU systems or `macos` on Apple Silicon.
+pixi run -e linux-gpu test_example_01_cartpole
+pixi run -e linux-gpu test_example_01_cartpole_described
+pixi run -e linux-gpu test_example_01_integration
 
 # Custom training
-pixi run python -c "
-from examples.cartpole import DescribedCartPoleWorld, run_training
+PYTHONPATH=src pixi run -e linux-gpu python -c "
+from examples.example_01 import DescribedGymWorld, run_training
 import torch
 
 def log_episode(episode, reward, avg_reward, agent):
@@ -124,7 +135,7 @@ def log_episode(episode, reward, avg_reward, agent):
         print(f'episode={episode} reward={reward:.1f} avg={avg_reward:.1f}')
 
 run_training(
-    DescribedCartPoleWorld(),
+    DescribedGymWorld('CartPole-v1'),
     num_episodes=1000,
     solved_threshold=475.0,
     planning_budget=5,
@@ -134,20 +145,14 @@ run_training(
 "
 
 # Fast component tests only (seconds, no full training)
-pixi run python -c "
-import sys; sys.path.insert(0, '.')
-from tst.debug_cartpole import test_sanity, test_value_function, test_q_equivalence
-test_sanity()
-test_value_function()
-test_q_equivalence()
-"
+pixi run -e linux-gpu test_debug_example_01_cartpole
 ```
 
 ### Ollama setup
 
 The LLM analysis step calls ollama at `http://172.26.64.1:11434` (WSL2
 host gateway). To use a different host, edit `_get_ollama_url()` in
-`examples/cartpole/llm.py`. If ollama is unreachable, the agent falls
+`examples/example_01/llm.py`. If ollama is unreachable, the agent falls
 back to heuristic feature/encoder selection and still trains normally.
 
 To run the dedicated live connectivity check:
@@ -213,7 +218,7 @@ The main knobs to tune, organized by module:
 ### Module layout
 
 ```
-examples/cartpole/
+examples/example_01/
   __init__.py            # public API exports
   runner.py              # build_agent() + run_training() orchestration
 
@@ -226,19 +231,20 @@ examples/cartpole/
   discovery.py           # Trial-and-error observation/action space discovery
   llm.py                 # Ollama REST API for feature analysis
 
-  # ── CartPole-specific World implementations ──
-  world.py               # Opaque CartPole wrapper (triggers discovery mode)
-  world_embedded.py      # CartPole wrapper with WorldDescription metadata
+  # ── Gym World wrappers ──
+  world.py               # Opaque gym wrapper (triggers discovery mode)
+  world_embedded.py      # Described gym wrapper + bundled CartPole metadata
 
-tst/
-  debug_cartpole.py      # Targeted component tests
-  run_cartpole.py        # Training with discovery (CartPoleWorld)
-  run_cartpole_embedded.py  # Training with embedded info (DescribedCartPoleWorld)
+tests/
+  debug_example_01_cartpole.py         # Targeted Example 01 component tests
+  run_example_01_cartpole.py           # Training with discovery on CartPole-v1
+  run_example_01_cartpole_described.py # Training with described CartPole-v1 metadata
+  test_example_01_integration.py       # Example 01 integration checks
 ```
 
 ### Known limitations
 
-DQN on CartPole exhibits inherent instability: the agent typically peaks
+When trained on CartPole, DQN exhibits inherent instability: the agent typically peaks
 at avg 340-380 reward then experiences periodic performance drops due to
 catastrophic forgetting in the replay buffer. The agent recovers from
 crashes given enough episodes. This is a well-known DQN property, not
@@ -256,7 +262,7 @@ Project documentation is published at:
 
 The docs include:
 
-- the API reference for `oak_architecture`
+- the API reference for `oakagent` (Use `import oak` in your code)
 - the architecture guide embedded directly into that API page
 - rendered diagrams for the default four-interface view, the fine-grained
   slot map, and the runtime call paths
@@ -288,10 +294,9 @@ pixi install
 ### Common tasks
 
 - `pixi run tests`
-  Install the package in editable mode and run every Python test script in
-  `tst/`.
+  Run the default smoke checks without installing the package in editable mode.
 - `pixi run test_llm_connection`
-  Run the live Ollama smoke test that verifies the CartPole LLM helper can
+  Run the live Ollama smoke test that verifies the Example 01 LLM helper can
   reach the configured model and parse a structured response.
 - `pixi run docs`
   Generate the API documentation site in `docs/api/`.
@@ -305,25 +310,24 @@ A `Makefile` is also provided for convenience, but it only forwards to
 
 ## Repository layout
 
-- `src/oak_architecture/`
+- `src/oak/`
   Core package with shared types, interface definitions, and the canonical
   `OaKAgent` execution loop.
-- `src/oak_architecture/fine_grained/`
+- `src/oak/fine_grained/`
   Optional lower-level interfaces and `Composite*` implementations for
   projects that want to swap internal building blocks independently.
 - `examples/`
   Repository-level example implementations that use the package as an external
   consumer would, including `minimal_oak.py`,
-  `minimal_oak_fine_grained.py`, and the full `cartpole/` agent.
-- `tst/`
-  Runnable test scripts. `pixi run tests` executes every `*.py` file in this
-  directory tree. `pixi run test_llm_connection` runs the dedicated live
-  Ollama connectivity check.
+  `minimal_oak_fine_grained.py`, and the full `example_01/` example.
+- `tests/`
+  Runnable test scripts and example entrypoints. `pixi run tests` covers the
+  default smoke path, while the `test_example_01_*` tasks exercise the
+  torch-backed example under a torch-enabled Pixi environment.
 - `docs/`
   Documentation sources, diagrams, API-doc templates, and generated API docs.
 
 ## Working in this repository
 
 If you want to prototype a concrete implementation in this repository, place it
-under `examples/` and add checks under `tst/`. Running `pixi run tests` will
-pick up any new Python test file automatically.
+under `examples/` and add checks under `tests/`.

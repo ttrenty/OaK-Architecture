@@ -2,6 +2,8 @@ from __future__ import annotations
 
 """Generate API documentation with a small pdoc compatibility shim."""
 
+import importlib
+import importlib.util
 from pathlib import Path
 import shutil
 import sys
@@ -14,8 +16,23 @@ import pdoc.render
 MARKDOWN_SNIPPETS = {
     "oak_architecture_api_intro": Path("docs/content/oak_architecture_api_intro.md"),
 }
-CORE_MODULES = ("oak_architecture",)
-DOCS_HOME_MODULE = "oak_architecture"
+CORE_MODULES = ("oak",)
+DOCS_HOME_MODULE = "oak"
+
+
+def _can_document_example_module(module_name: str) -> bool:
+    """Return whether an example module can be imported in this environment."""
+    if module_name == "examples.example_01" and importlib.util.find_spec("torch") is None:
+        return False
+
+    try:
+        importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if module_name.startswith("examples.example_01"):
+            print(f"Skipping {module_name}: missing optional dependency {exc.name!r}")
+            return False
+        raise
+    return True
 
 
 def _configure_import_paths() -> None:
@@ -41,7 +58,9 @@ def _discover_example_modules() -> tuple[str, ...]:
         parts = list(path.with_suffix("").parts)
         if parts[-1] == "__init__":
             parts = parts[:-1]
-        module_names.add(".".join(parts))
+        module_name = ".".join(parts)
+        if _can_document_example_module(module_name):
+            module_names.add(module_name)
 
     return tuple(sorted(module_names))
 
@@ -53,10 +72,10 @@ def _build_sidebar_sections(example_modules: tuple[str, ...]) -> list[dict[str, 
         {
             "title": "Core API",
             "items": [
-                {"module": "oak_architecture", "label": "oak_architecture"},
+                {"module": "oak", "label": "oak"},
                 {
-                    "module": "oak_architecture.fine_grained",
-                    "label": "oak_architecture.fine_grained",
+                    "module": "oak.fine_grained",
+                    "label": "oak.fine_grained",
                 },
             ],
         },

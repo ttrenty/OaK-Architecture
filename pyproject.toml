@@ -3,16 +3,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "oak-architecture"
+name = "oakagent"
 version = "0.1.0"
 description = "Interfaces and reference wiring for a prototype OaK agent"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-authors = [
-  { name = "OaK Architecture Contributors" }
-]
-keywords = ["reinforcement-learning", "oak", "rich-sutton", "interfaces", "agent-architecture"]
+license-files = ["LICENSE"]
+keywords = ["reinforcement-learning", "oak", "sutton", "interfaces", "benchmark", "artificial-intelligence", "agent-architecture"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
@@ -23,9 +21,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/oak-architecture"
-Documentation = "https://github.com/example/oak-architecture/tree/main/docs"
-Repository = "https://github.com/example/oak-architecture"
+Homepage = "https://github.com/ttrenty/OaK-Architecture"
+Documentation = "https://ttrenty.github.io/OaK-Architecture/"
+Repository = "https://github.com/ttrenty/OaK-Architecture"
+Issues = "https://github.com/ttrenty/OaK-Architecture/issues"
 
 [project.optional-dependencies]
 dev = [

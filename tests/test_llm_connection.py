@@ -2,16 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
-import sys
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from examples.cartpole.llm import _DEFAULT_MODEL, _get_ollama_url, analyze_world
+from examples.example_01.llm import _DEFAULT_MODEL, _get_ollama_url, analyze_world
 
 _RUN_FLAG = "OAK_RUN_LLM_CONNECTION_TEST"
 _MODEL_ENV = "OAK_LLM_MODEL"

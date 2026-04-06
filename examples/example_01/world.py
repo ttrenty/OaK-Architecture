@@ -1,21 +1,29 @@
-"""CartPole gymnasium wrapper conforming to the OaK World protocol.
+"""Gymnasium wrapper conforming to the OaK World protocol.
 
-The wrapper exposes NO metadata about observation or action spaces.
+The wrapper exposes no metadata about observation or action spaces.
 The agent must discover everything through interaction.
 """
 
 from __future__ import annotations
 
+from typing import Any, Mapping
+
 import gymnasium as gym
 
-from oak_architecture.types import TimeStep
+from oak.types import TimeStep
 
 
-class CartPoleWorld:
-    """Thin gymnasium wrapper, no metadata exposure."""
+class GymWorld:
+    """Thin gymnasium wrapper for any environment, with no metadata exposure."""
 
-    def __init__(self) -> None:
-        self.env = gym.make("CartPole-v1")
+    def __init__(
+        self,
+        env_id: str,
+        *,
+        make_kwargs: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.env_id = env_id
+        self.env = gym.make(env_id, **dict(make_kwargs or {}))
 
     def reset(self) -> TimeStep:
         obs, info = self.env.reset()

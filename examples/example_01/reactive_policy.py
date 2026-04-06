@@ -18,8 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from oak_architecture.interfaces import ReactivePolicy
-from oak_architecture.types import (
+from oak.interfaces import ReactivePolicy
+from oak.types import (
     GeneralValueFunctionId,
     OptionId,
     PlanningUpdate,
@@ -53,16 +53,17 @@ class _OptionNetworks(nn.Module):
         )
         self.q_target.load_state_dict(self.q_net.state_dict())
 
+        termination_output = nn.Linear(hidden, 1)
         self.termination = nn.Sequential(
             nn.Linear(state_dim, hidden),
             nn.ReLU(),
-            nn.Linear(hidden, 1),
+            termination_output,
             nn.Sigmoid(),
         )
         # Initialize termination bias low so options persist longer initially
         # sigmoid(-2) ≈ 0.12 → options rarely terminate at first
         with torch.no_grad():
-            self.termination[-2].bias.fill_(-2.0)
+            termination_output.bias.fill_(-2.0)
 
     def q_values(self, state: torch.Tensor) -> torch.Tensor:
         return self.q_net(state)
@@ -311,7 +312,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
 
         with torch.no_grad():
             q = nets.q_values(state)
-        return q.argmax().item()
+        return int(q.argmax().item())
 
     # ------------------------------------------------------------------
     # Internal: learning

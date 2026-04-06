@@ -5,6 +5,8 @@ docs/api/
 docs/img/*
 !docs/img/.gitkeep
 .vscode/
+tests/results/
+RELEASING.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

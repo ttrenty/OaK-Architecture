@@ -16,8 +16,8 @@ captures one of Sutton's architectural roles:
 
 To build an OaK agent, implement these four interfaces and pass them to
 `OaKAgent`.  For finer-grained control, see
-`oak_architecture.fine_grained.components` for the building blocks and
-`oak_architecture.fine_grained.composites` for ready-made implementations
+`oak.fine_grained.components` for the building blocks and
+`oak.fine_grained.composites` for ready-made implementations
 that compose those building blocks into these four interfaces.
 """
 
@@ -27,6 +27,7 @@ from typing import (
     Mapping,
     Protocol,
     Sequence,
+    TypeVar,
     runtime_checkable,
 )
 
@@ -54,9 +55,13 @@ from .types import (
 # Environment protocol
 # ─────────────────────────────────────────────────────────────────────
 
+WorldObservationT = TypeVar("WorldObservationT")
+WorldActionT = TypeVar("WorldActionT", contravariant=True)
+WorldInfoT = TypeVar("WorldInfoT")
+
 
 @runtime_checkable
-class World(Protocol[ObservationT, ActionT, InfoT]):
+class World(Protocol[WorldObservationT, WorldActionT, WorldInfoT]):
     """Minimal environment protocol.
 
     A `World` may wrap a simulator, a benchmark environment, or a custom
@@ -67,9 +72,11 @@ class World(Protocol[ObservationT, ActionT, InfoT]):
     `OaKAgent.train()`.
     """
 
-    def reset(self) -> TimeStep[ObservationT, InfoT]: ...
+    def reset(self) -> TimeStep[WorldObservationT, WorldInfoT]: ...
 
-    def step(self, action: ActionT) -> TimeStep[ObservationT, InfoT]: ...
+    def step(
+        self, action: WorldActionT
+    ) -> TimeStep[WorldObservationT, WorldInfoT]: ...
 
     def close(self) -> None:
         """Release environment resources.  Default is a no-op."""
@@ -127,7 +134,7 @@ class Perception(
 
     The finer-grained layer splits this into `StateBuilder`,
     `FeatureBank`, `FeatureConstructor`, `FeatureRanker`, and
-    `SubtaskGenerator` (see `oak_architecture.fine_grained.components`).
+    `SubtaskGenerator` (see `oak.fine_grained.components`).
     """
 
     @abstractmethod
@@ -198,13 +205,15 @@ class ValueFunction(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, In
 
     The finer-grained layer splits this into `ValueEstimator`,
     `GeneralValueFunctionLearner`, `UtilityAssessor`, `Curator`, and
-    `MetaStepSizeLearner` (see `oak_architecture.fine_grained.components`).
+    `MetaStepSizeLearner` (see `oak.fine_grained.components`).
     """
 
     @abstractmethod
     def update(
         self,
         transition: Transition[ActionT, SubjectiveStateT, InfoT],
+        *,
+        planning: bool = False,
     ) -> Mapping[GeneralValueFunctionId, float]:
         """Learn from a transition and return TD-error signals."""
         raise NotImplementedError
@@ -251,7 +260,7 @@ class TransitionModel(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, 
 
     The finer-grained layer splits this into `WorldModel`,
     `OptionModelLearner`, individual `OptionModel` objects, and a
-    `Planner` (see `oak_architecture.fine_grained.components`).
+    `Planner` (see `oak.fine_grained.components`).
     """
 
     @abstractmethod
@@ -304,7 +313,7 @@ class ReactivePolicy(ContinualLearner, ABC, Generic[SubjectiveStateT, ActionT, I
 
     The finer-grained layer splits this into `ActionSelector`,
     `OptionLibrary`, and `OptionLearner`
-    (see `oak_architecture.fine_grained.components`).
+    (see `oak.fine_grained.components`).
     """
 
     @abstractmethod

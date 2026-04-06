@@ -38,7 +38,7 @@
         {% endfor %}
     {% endif %}
     {{ super() }}
-    {% if module.modulename == "oak_architecture" %}
+    {% if module.modulename == "oak" %}
         <h2>Architecture Guide</h2>
         <ul>
             <li><a href="#diagram-gallery">Diagram Gallery</a></li>
@@ -55,7 +55,7 @@
 
 {% block module_info %}
     {{ super() }}
-    {% if module.modulename == "oak_architecture" %}
+    {% if module.modulename == "oak" %}
         <div class="docstring oak-module-extras">
             {{ docs_markdown["oak_architecture_api_intro"] | to_html | safe }}
         </div>

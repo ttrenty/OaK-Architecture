@@ -15,8 +15,8 @@ from typing import Any
 
 import numpy as np
 
-from oak_architecture.interfaces import World
-from oak_architecture.types import TimeStep
+from oak.interfaces import World
+from oak.types import TimeStep
 
 logger = logging.getLogger(__name__)
 

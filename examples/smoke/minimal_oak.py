@@ -30,15 +30,15 @@ What this module is not:
 from dataclasses import dataclass
 from typing import Mapping, Sequence, TypedDict
 
-from oak_architecture.agent import OaKAgent
-from oak_architecture.interfaces import (
+from oak.agent import OaKAgent
+from oak.interfaces import (
     Perception,
     ReactivePolicy,
     TransitionModel,
     ValueFunction,
     World,
 )
-from oak_architecture.types import (
+from oak.types import (
     CurationDecision,
     FeatureId,
     FeatureSpec,
@@ -69,6 +69,19 @@ class MinimalTraceStep(TypedDict):
     active_option_id: OptionId | None
     created_subtasks: list[SubtaskId]
     planning_budget_used: int | None
+
+
+def _planning_budget_used(update: PlanningUpdate[Action] | None) -> int | None:
+    """Extract an integer planning budget from structured search statistics."""
+    if update is None:
+        return None
+
+    value = update.search_statistics.get("budget_used")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
 
 
 @dataclass(slots=True, frozen=True)
@@ -253,6 +266,8 @@ class MinimalValueFunction(ValueFunction[MinimalSubjectiveState, Action, Minimal
     def update(
         self,
         transition: Transition[Action, MinimalSubjectiveState, MinimalInfo],
+        *,
+        planning: bool = False,
     ) -> Mapping[GeneralValueFunctionId, float]:
         self._value = transition.reward
         return {"main": 0.0}
@@ -446,11 +461,7 @@ def run_minimal_episode(horizon: int = 5) -> list[MinimalTraceStep]:
                 "created_subtasks": [
                     subtask.subtask_id for subtask in result.created_subtasks
                 ],
-                "planning_budget_used": (
-                    result.planning_update.search_statistics["budget_used"]
-                    if result.planning_update is not None
-                    else None
-                ),
+                "planning_budget_used": _planning_budget_used(result.planning_update),
             }
         )
         step = world.step(action)

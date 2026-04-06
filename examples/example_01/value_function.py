@@ -16,8 +16,8 @@ from typing import Any, Mapping, Sequence
 import torch
 import torch.nn as nn
 
-from oak_architecture.interfaces import ValueFunction
-from oak_architecture.types import (
+from oak.interfaces import ValueFunction
+from oak.types import (
     ComponentKind,
     CurationDecision,
     GeneralValueFunctionId,
