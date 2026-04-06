@@ -4,12 +4,13 @@ from __future__ import annotations
 
 Each composite builds one of the four main interfaces from finer-grained
 component interfaces (defined in
-`oak_architecture.fine_grained.components`).  Use these when you want to
+`oak.fine_grained.components`).  Use these when you want to
 independently swap individual building blocks inside a module.
 
 If you prefer a simpler setup, implement the four main interfaces directly.
 """
 
+from collections.abc import Sequence as SequenceCollection
 from typing import Generic, Mapping, Sequence
 
 from .components import (
@@ -55,6 +56,22 @@ from ..types import (
     UsageRecord,
     UtilityRecord,
 )
+
+
+def _as_option_intensities(value: object) -> Sequence[float] | None:
+    """Validate metadata-provided option intensities before composition."""
+    if not isinstance(value, SequenceCollection) or isinstance(value, (str, bytes)):
+        return None
+
+    intensities: list[float] = []
+    for item in value:
+        if isinstance(item, (str, bytes)):
+            return None
+        try:
+            intensities.append(float(item))
+        except (TypeError, ValueError):
+            return None
+    return tuple(intensities)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -165,7 +182,11 @@ class CompositeValueFunction(
     def update(
         self,
         transition: Transition[ActionT, SubjectiveStateT, InfoT],
+        *,
+        planning: bool = False,
     ) -> Mapping[GeneralValueFunctionId, float]:
+        if planning:
+            return {}
         return self._value_estimator.update(transition)
 
     def predict(
@@ -374,7 +395,9 @@ class CompositeReactivePolicy(
         # Option composition via the keyboard: the ActionSelector may
         # place per-option intensities in metadata["option_intensities"]
         # to request blended behaviour rather than a single option.
-        intensities = decision.metadata.get("option_intensities")
+        intensities = _as_option_intensities(
+            decision.metadata.get("option_intensities")
+        )
         if intensities is not None and self._option_keyboard is not None:
             descriptor = self._option_keyboard.compose(intensities)
             self._active_option = self._option_library.get(descriptor.option_id)

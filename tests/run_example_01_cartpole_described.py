@@ -1,24 +1,21 @@
-"""Run the OaK agent on CartPole-v1 in embedded mode (no discovery, no LLM).
+"""Run Example 01 on CartPole-v1 in described mode.
 
-This script uses the same training pipeline as `run_cartpole.py` but passes
-a `DescribedCartPoleWorld` whose `description` attribute provides
+This script uses the same training pipeline as `run_example_01_cartpole.py` but passes
+a `DescribedGymWorld("CartPole-v1")` whose `description` attribute provides
 observation/action space metadata directly, so discovery is skipped entirely.
 
-Compare the output of this script with `run_cartpole.py` (discovery mode)
+Compare the output of this script with `run_example_01_cartpole.py`
 to see the effect of the two approaches on training.
 """
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from examples.cartpole import DescribedCartPoleWorld, run_training
-from oak_architecture import OaKAgent
+from examples.example_01 import (
+    CARTPOLE_WORLD_DESCRIPTION,
+    DescribedGymWorld,
+    run_training,
+)
+from oak import OaKAgent
 
 
 def main() -> None:
@@ -44,7 +41,7 @@ def main() -> None:
         )
 
     # Show the embedded world description
-    desc = DescribedCartPoleWorld.description
+    desc = CARTPOLE_WORLD_DESCRIPTION
     print("World description:")
     print(f"  obs_type={desc.obs_type}, obs_shape={desc.obs_shape}")
     print(f"  action_type={desc.action_type}, action_n={desc.action_n}")
@@ -52,7 +49,7 @@ def main() -> None:
     print(f"  features={[f['name'] for f in desc.features]}")
     print()
 
-    world = DescribedCartPoleWorld()
+    world = DescribedGymWorld("CartPole-v1")
     reward_history = run_training(
         world,
         num_episodes=1000,

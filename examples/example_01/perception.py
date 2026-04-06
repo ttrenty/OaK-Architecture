@@ -16,8 +16,8 @@ from typing import Any, Mapping, Sequence
 
 import torch
 
-from oak_architecture.interfaces import Perception
-from oak_architecture.types import (
+from oak.interfaces import Perception
+from oak.types import (
     FeatureId,
     FeatureSpec,
     SubtaskSpec,

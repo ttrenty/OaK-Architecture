@@ -1,16 +1,9 @@
-"""Run the OaK agent on CartPole-v1 in discovery mode (trial-and-error + LLM)."""
+"""Run Example 01 on CartPole-v1 in discovery mode."""
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from examples.cartpole import CartPoleWorld, run_training
-from oak_architecture import OaKAgent
+from examples.example_01 import GymWorld, run_training
+from oak import OaKAgent
 
 
 def main() -> None:
@@ -35,7 +28,7 @@ def main() -> None:
             f"Options: {n_options}"
         )
 
-    world = CartPoleWorld()
+    world = GymWorld("CartPole-v1")
     reward_history = run_training(
         world,
         num_episodes=1000,

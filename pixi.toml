@@ -15,71 +15,36 @@ inputs = [
 ]
 outputs = ["dist/*"]
 
-[tasks.tests]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-find tst -type f -name "*.py" | sort | while read -r path; do
-    echo "===== RUNNING: $path ====="
-    python "$path" || exit 1
-done
-'
-"""
+[tasks._run_minimal_oak]
+cmd = "env PYTHONPATH=src python -m tests.run_minimal_oak"
 
-# Only run some of the tests
-[tasks.tests_fast]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-python tst/run_minimal_oak.py &&
-python tst/run_minimal_oak_fine_grained.py || exit 1
-'
-"""
+[tasks._run_minimal_oak_fine_grained]
+cmd = "env PYTHONPATH=src python -m tests.run_minimal_oak_fine_grained"
 
-[tasks.test_integration]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-python tst/test_integration.py
-'
-"""
+[tasks._test_example_01_integration]
+cmd = "env PYTHONPATH=src python -m tests.test_example_01_integration"
 
-[tasks.test_cartpole]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-python tst/run_cartpole.py
-'
-"""
-
-[tasks.test_cartpole_embedded]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-python tst/run_cartpole_embedded.py
-'
-"""
-
-[tasks.test_debug_cartpole]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-python tst/debug_cartpole.py
-'
-"""
+[tasks.tests_integration]
+depends-on = ["_run_minimal_oak", "_run_minimal_oak_fine_grained", "_test_example_01_integration"]
 
 [tasks.test_llm_connection]
-cmd = """
-bash -lc '
-python -m pip install -e . >/dev/null 2>&1 &&
-OAK_RUN_LLM_CONNECTION_TEST=1 python tst/test_llm_connection.py
-'
-"""
+cmd = "env PYTHONPATH=src OAK_RUN_LLM_CONNECTION_TEST=1 python -m tests.test_llm_connection"
+
+[tasks.test_debug_example_01_cartpole]
+cmd = "env PYTHONPATH=src python -m tests.debug_example_01_cartpole"
+
+[tasks.test_example_01_cartpole]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole"
+
+[tasks.test_example_01_cartpole_described]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described"
+
+[tasks.tests]
+depends-on = ["tests_fast", "test_llm_connection", "test_example_01_cartpole", "test_example_01_cartpole_described"]
 
 # Use it with: `pixi run typecheck <path>`
 [tasks.typecheck]
-args = ["target"]
-cmd = "mypy --ignore-missing-imports --show-error-codes {{ target }}"
+cmd = "mypy --ignore-missing-imports --show-error-codes src tests examples"
 
 [tasks._render_plantuml]
 cmd = "rm -f docs/diagrams/oak_core.svg docs/diagrams/oak_architecture.svg docs/diagrams/oak_runtime_overview.svg docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_core.svg docs/api/img/oak_architecture.svg docs/api/img/oak_runtime_overview.svg docs/api/img/oak_runtime_sequence.svg && mkdir -p docs/api/img && JAVA_TOOL_OPTIONS=-Djava.awt.headless=true plantuml -tsvg docs/diagrams/oak_core.puml docs/diagrams/oak_architecture.puml docs/diagrams/oak_runtime_overview.puml docs/diagrams/oak_runtime_sequence.puml && mv docs/diagrams/oak_core.svg docs/api/img/oak_core.svg && mv docs/diagrams/oak_architecture.svg docs/api/img/oak_architecture.svg && mv docs/diagrams/oak_runtime_overview.svg docs/api/img/oak_runtime_overview.svg && mv docs/diagrams/oak_runtime_sequence.svg docs/api/img/oak_runtime_sequence.svg"
@@ -114,7 +79,7 @@ inputs = ["pixi.toml", "pixi.lock"]
 outputs = ["environment.yml"]
 
 [tasks.clean]
-cmd = "rm -rf dist build docs/api src/oak_architecture.egg-info src/oak_architecture/__pycache__ examples/__pycache__ docs/tools/__pycache__"
+cmd = "rm -rf dist build docs/api src/*.egg-info src/oak/__pycache__ examples/__pycache__ docs/tools/__pycache__"
 
 # shared dependencies
 [dependencies]

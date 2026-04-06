@@ -44,7 +44,7 @@ end box
 rnote over Agent, CRP
 This is the per-step call path through the Composite* implementations.
 It shows the fine-grained interfaces touched during one step(...),
-not every optional interface in oak_architecture.fine_grained.components.
+not every optional interface in oak.fine_grained.components.
 endrnote
 
 caller -> Agent : step(time_step)

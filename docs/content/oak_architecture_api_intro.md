@@ -65,8 +65,8 @@ your classes is a self-contained module.  This is the simplest path and what
 the `examples/smoke/minimal_oak.py` example demonstrates.
 
 **Composite approach**: use the fine-grained component interfaces from
-`oak_architecture.fine_grained.components` and wire them together using the
-composites from `oak_architecture.fine_grained.composites`.  This is for
+`oak.fine_grained.components` and wire them together using the
+composites from `oak.fine_grained.composites`.  This is for
 projects that need to independently swap building blocks inside a module
 (e.g. replace the planner without touching the world model).  The
 `examples/smoke/minimal_oak_fine_grained.py` example demonstrates this path with
@@ -89,7 +89,7 @@ implementation:
   and the main data flow between them.
 - `oak_architecture`
   The fine-grained slot map: Composite modules, their delegated interfaces,
-  and associated optional interfaces from `oak_architecture.fine_grained.components`.
+  and associated optional interfaces from `oak.fine_grained.components`.
 - `oak_runtime_overview`
   The top-level phase-by-phase sequence at the four-interface layer.
 - `oak_runtime_sequence`
@@ -107,7 +107,7 @@ Recommended reading order for the diagrams:
 phases.  The difference is only the level of expansion: `oak_runtime_overview`
 stays at the four-interface layer, while `oak_runtime_sequence` shows what
 happens when those slots are filled by the Composite* implementations from
-`oak_architecture.fine_grained.composites`.  If either diagram and the code
+`oak.fine_grained.composites`.  If either diagram and the code
 ever disagree, the documentation should be fixed.
 
 The diagrams are intentionally runtime-oriented.  They are not exhaustive
@@ -262,11 +262,11 @@ wiring.
 
 ## Repository Examples
 
-The concrete implementations live outside `oak_architecture` on purpose.
+The concrete implementations live outside `oak` on purpose.
 That shows the intended usage pattern: the package provides the canonical
 `OaKAgent` coordinator and interfaces, while downstream code provides the
 implementations.  The generated docs now include the repository-level
-`examples` package alongside the core `oak_architecture` API.
+`examples` package alongside the core `oak` API.
 
 - `examples/smoke/minimal_oak.py`
   A full smoke-path implementation using the **direct approach**.  Each of
@@ -275,7 +275,7 @@ implementations.  The generated docs now include the repository-level
 - `examples/smoke/minimal_oak_fine_grained.py`
   The same toy environment built from the fine-grained composite building
   blocks instead of direct interface implementations.
-- `examples/cartpole/`
+- `examples/example_01/`
   A fuller learning agent that exercises discovery, perception, planning,
   value learning, and reactive control together.
 
@@ -288,7 +288,7 @@ pixi run tests
 To inspect the smallest runnable example directly:
 
 ```python
-from examples import build_minimal_agent, run_minimal_episode
+from examples.smoke.minimal_oak import build_minimal_agent, run_minimal_episode
 
 agent = build_minimal_agent()
 trace = run_minimal_episode(horizon=5)

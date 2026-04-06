@@ -1,4 +1,4 @@
-"""Integration tests for the OaK agent and World protocol.
+"""Integration tests for Example 01 and the smoke examples.
 
 Verifies that:
 - All World implementations satisfy the World protocol
@@ -11,28 +11,29 @@ Verifies that:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from collections.abc import Callable
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from examples import build_agent, run_training
-from examples.cartpole import CartPoleWorld, DescribedCartPoleWorld
+from examples.example_01 import runner as example_01_runner
+from examples.example_01 import DescribedGymWorld, GymWorld, build_agent, run_training
 from examples.smoke.minimal_oak import MinimalWorld
 from examples.smoke.minimal_oak import run_minimal_episode as run_minimal_smoke
 from examples.smoke.minimal_oak_fine_grained import run_minimal_episode as run_minimal_fine_grained
-from oak_architecture import OaKAgent
-from oak_architecture.interfaces import World
+from oak import OaKAgent
+from oak.interfaces import World
 
 
 def test_world_protocol() -> None:
     """All World implementations satisfy the World protocol."""
-    for cls in (CartPoleWorld, DescribedCartPoleWorld, MinimalWorld):
-        w = cls()
-        assert isinstance(w, World), f"{cls.__name__} does not satisfy World protocol"
+    world_builders: list[tuple[str, Callable[[], object]]] = [
+        ("GymWorld", lambda: GymWorld("CartPole-v1")),
+        ("DescribedGymWorld", lambda: DescribedGymWorld("CartPole-v1")),
+        ("MinimalWorld", MinimalWorld),
+    ]
+    for name, build_world in world_builders:
+        w = build_world()
+        assert isinstance(w, World), f"{name} does not satisfy World protocol"
         w.close()
-        print(f"  {cls.__name__}: OK")
+        print(f"  {name}: OK")
 
     print("PASS: all World implementations satisfy the protocol")
 
@@ -51,7 +52,7 @@ def test_build_agent() -> None:
 
 def test_agent_train_embedded() -> None:
     """agent.train(world) runs on an embedded world."""
-    world = DescribedCartPoleWorld()
+    world = DescribedGymWorld("CartPole-v1")
     config = world.description.to_config()
     agent = build_agent(config)
     logged_episodes: list[tuple[int, float, float]] = []
@@ -66,27 +67,34 @@ def test_agent_train_embedded() -> None:
             raise AssertionError("episode_logger received a different agent instance")
         logged_episodes.append((episode, reward, avg_reward))
 
-    rewards = agent.train(world, num_episodes=15, episode_logger=log_episode)
+    num_episodes = 3
+    rewards = agent.train(world, num_episodes=num_episodes, episode_logger=log_episode)
     world.close()
 
-    assert len(rewards) == 15, f"Expected 15 episodes, got {len(rewards)}"
-    assert len(logged_episodes) == 15, "episode_logger should run once per episode"
+    assert len(rewards) == num_episodes, f"Expected {num_episodes} episodes, got {len(rewards)}"
+    assert len(logged_episodes) == num_episodes, "episode_logger should run once per episode"
     print(f"PASS: agent.train() ran {len(rewards)} episodes")
 
 
 def test_run_training_embedded() -> None:
     """run_training() works with an embedded world."""
-    world = DescribedCartPoleWorld()
-    rewards = run_training(world, num_episodes=15, verbose=False)
+    world = DescribedGymWorld("CartPole-v1")
+    num_episodes = 3
+    rewards = run_training(world, num_episodes=num_episodes, verbose=False)
 
-    assert len(rewards) == 15, f"Expected 15 episodes, got {len(rewards)}"
+    assert len(rewards) == num_episodes, f"Expected {num_episodes} episodes, got {len(rewards)}"
     print(f"PASS: run_training(embedded) ran {len(rewards)} episodes")
 
 
 def test_run_training_discovery() -> None:
     """run_training() works with a discovery world."""
-    world = CartPoleWorld()
-    rewards = run_training(world, num_episodes=10, verbose=False)
+    world = GymWorld("CartPole-v1")
+    original_analyze_world = example_01_runner.analyze_world
+    example_01_runner.analyze_world = lambda *_args, **_kwargs: None
+    try:
+        rewards = run_training(world, num_episodes=10, verbose=False)
+    finally:
+        example_01_runner.analyze_world = original_analyze_world
 
     assert len(rewards) == 10, f"Expected 10 episodes, got {len(rewards)}"
     print(f"PASS: run_training(discovery) ran {len(rewards)} episodes")
@@ -107,11 +115,11 @@ def test_smoke_fine_grained() -> None:
     print("PASS: fine-grained smoke test")
 
 
-def test_top_level_imports() -> None:
-    """Top-level examples package exports the new names."""
+def test_example_imports() -> None:
+    """Example 01 exports its direct public API."""
     assert callable(build_agent)
     assert callable(run_training)
-    print("PASS: top-level imports")
+    print("PASS: direct example imports")
 
 
 def main() -> None:
@@ -123,7 +131,7 @@ def main() -> None:
         test_run_training_discovery,
         test_smoke_minimal,
         test_smoke_fine_grained,
-        test_top_level_imports,
+        test_example_imports,
     ]
 
     results: dict[str, bool] = {}

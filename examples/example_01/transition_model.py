@@ -15,8 +15,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from oak_architecture.interfaces import TransitionModel, ValueFunction
-from oak_architecture.types import (
+from oak.interfaces import TransitionModel, ValueFunction
+from oak.types import (
     OptionId,
     PlanningUpdate,
     Transition,
@@ -141,7 +141,7 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
                 next_state_pred = s + delta.squeeze(0)
 
             # Create synthetic transition and feed to value function
-            synthetic = Transition(
+            synthetic: Transition[Any, torch.Tensor, dict[str, Any]] = Transition(
                 subjective_state=state,
                 action=action,
                 reward=reward_pred.item(),
