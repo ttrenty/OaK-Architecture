@@ -12,6 +12,7 @@ from typing import Any, Protocol
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ class MLPEncoder(nn.Module):
 
 
 class CNNEncoder(nn.Module):
-    """Placeholder CNN encoder for image observations."""
+    """CNN encoder for image observations with optional autoencoder training."""
 
     def __init__(
         self,
@@ -137,6 +138,7 @@ class CNNEncoder(nn.Module):
         super().__init__()
         self._latent_dim = latent_dim
         self._trainable = trainable
+        self._input_channels = input_channels
 
         self.conv = nn.Sequential(
             nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
@@ -146,8 +148,10 @@ class CNNEncoder(nn.Module):
             nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.ReLU(),
         )
-        # Final projection set lazily on first call
+        # Projection / reconstruction heads are created lazily once the
+        # flattened conv dimensionality is known from a real observation.
         self._proj: nn.Linear | None = None
+        self._decoder: nn.Module | None = None
         self._optimizer: torch.optim.Optimizer | None = None
         self._lr = lr
 
@@ -157,15 +161,69 @@ class CNNEncoder(nn.Module):
 
     def encode(self, observation: Any) -> torch.Tensor:
         x = self._to_image_tensor(observation)
-        features = self.conv(x).flatten()
-        if self._proj is None:
-            self._proj = nn.Linear(features.shape[0], self._latent_dim)
-            if self._trainable:
-                self._optimizer = torch.optim.Adam(self.parameters(), lr=self._lr)
-        return self._proj(features)
+        with torch.no_grad() if not self._trainable else torch.enable_grad():
+            latent = self._encode_batch(x)
+        return latent.squeeze(0)
 
     def train_step(self, observation: Any) -> float:
-        return 0.0  # placeholder, no training logic yet
+        if not self._trainable:
+            return 0.0
+
+        x = self._to_image_tensor(observation)
+        z = self._encode_batch(x)
+        if self._decoder is None or self._optimizer is None:
+            return 0.0
+
+        x_hat = self._decoder(z)
+        if x_hat.shape[-2:] != x.shape[-2:]:
+            x_hat = F.interpolate(
+                x_hat,
+                size=x.shape[-2:],
+                mode="bilinear",
+                align_corners=False,
+            )
+        loss = F.mse_loss(x_hat, x)
+
+        self._optimizer.zero_grad()
+        loss.backward()
+        self._optimizer.step()
+        return loss.item()
+
+    def _encode_batch(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.conv(x)
+        flat = features.flatten(start_dim=1)
+        input_shape = (int(x.shape[1]), int(x.shape[2]), int(x.shape[3]))
+        self._ensure_heads(features, input_shape)
+        if self._proj is None:
+            raise RuntimeError("projection head was not initialised")
+        return self._proj(flat)
+
+    def _ensure_heads(
+        self, features: torch.Tensor, input_shape: tuple[int, int, int]
+    ) -> None:
+        if self._proj is None:
+            flat_dim = features[0].numel()
+            self._proj = nn.Linear(flat_dim, self._latent_dim).to(features.device)
+
+        if self._trainable and self._decoder is None:
+            conv_channels, conv_height, conv_width = features.shape[1:]
+            in_channels, _, _ = input_shape
+            self._decoder = nn.Sequential(
+                nn.Linear(self._latent_dim, conv_channels * conv_height * conv_width),
+                nn.Unflatten(1, (conv_channels, conv_height, conv_width)),
+                nn.ConvTranspose2d(conv_channels, 64, kernel_size=3, stride=1),
+                nn.ReLU(),
+                nn.ConvTranspose2d(
+                    64,
+                    32,
+                    kernel_size=4,
+                    stride=2,
+                    output_padding=1,
+                ),
+                nn.ReLU(),
+                nn.ConvTranspose2d(32, in_channels, kernel_size=8, stride=4),
+            ).to(features.device)
+            self._optimizer = torch.optim.Adam(self.parameters(), lr=self._lr)
 
     def _to_image_tensor(self, obs: Any) -> torch.Tensor:
         if isinstance(obs, torch.Tensor):
@@ -174,9 +232,12 @@ class CNNEncoder(nn.Module):
             t = torch.from_numpy(obs).float()
         else:
             t = torch.tensor(obs, dtype=torch.float32)
-        # Expect (H, W, C) → (C, H, W)
-        if t.dim() == 3 and t.shape[-1] in (1, 3, 4):
+        # Expect (H, W, C) → (C, H, W).
+        # Permute when the last dimension matches the expected channel count.
+        if t.dim() == 3 and t.shape[-1] == self._input_channels:
             t = t.permute(2, 0, 1)
+        if t.dim() == 3:
+            t = t.unsqueeze(0)
         return t
 
 
@@ -223,10 +284,15 @@ def create_encoder(
     latent_dim: int = 64,
     *,
     trainable: bool = False,
+    input_channels: int = 3,
 ) -> MLPEncoder | CNNEncoder | IdentityEncoder:
     """Instantiate an encoder by name."""
     if encoder_type == "mlp":
         return MLPEncoder(input_dim, latent_dim=latent_dim, trainable=trainable)
     if encoder_type == "cnn":
-        return CNNEncoder(latent_dim=latent_dim, trainable=trainable)
+        return CNNEncoder(
+            input_channels=input_channels,
+            latent_dim=latent_dim,
+            trainable=trainable,
+        )
     return IdentityEncoder(latent_dim=input_dim)

@@ -18,6 +18,7 @@ __all__ = [
     "DescribedGymWorld",
     "CARTPOLE_WORLD_DESCRIPTION",
     "WorldDescription",
+    "ArcWorld",
 ]
 
 
@@ -51,6 +52,10 @@ def __getattr__(name: str) -> Any:
             "CARTPOLE_WORLD_DESCRIPTION": CARTPOLE_WORLD_DESCRIPTION,
             "WorldDescription": WorldDescription,
         }
+    elif name == "ArcWorld":
+        from .world_arc import ArcWorld
+
+        exports = {"ArcWorld": ArcWorld}
     else:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

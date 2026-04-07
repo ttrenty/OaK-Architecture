@@ -7,6 +7,9 @@ skinparam shadowing false
 skinparam componentStyle rectangle
 skinparam packageStyle rectangle
 skinparam linetype ortho
+skinparam ArrowThickness 2
+skinparam ranksep 70
+skinparam nodesep 36
 
 skinparam package<<agent>> {
   BackgroundColor #FFF7DF
@@ -27,7 +30,7 @@ skinparam artifact {
   FontColor #333333
 }
 
-actor caller
+actor world
 
 artifact time_step
 artifact "step memory\nlast_subjective_state\nlast_action" as step_memory
@@ -36,7 +39,7 @@ artifact "transition\n(internal step record)" as transition
 artifact planning_update
 artifact action
 
-package "OaKAgent\n(default interface layer)" <<agent>> {
+package "OaKAgent\nconcrete class with a .train() method" <<agent>> {
   rectangle "Perception" as perception <<module>>
   rectangle "TransitionModel" as transition_model <<module>>
   rectangle "ValueFunction" as value_function <<module>>
@@ -48,36 +51,39 @@ package "OaKAgent\n(default interface layer)" <<agent>> {
   value_function -[hidden]right-> reactive_policy
 }
 
-caller -up-> time_step
-time_step --> perception : perceive(...)
-perception --> subjective_state : current state estimate
+time_step -[hidden]right-> step_memory
+step_memory -[hidden]right-> subjective_state
 
-step_memory --> transition : previous state + action
-time_step --> transition : reward, terminated,\ninfo
-subjective_state --> transition : next subjective state
-transition --> value_function : learn from transition
-transition --> transition_model : learn model / options
-transition --> reactive_policy : learn policy / options
+world -up-> time_step
+time_step -right-> perception : perceive(...)
+perception --> subjective_state
 
-subjective_state --> transition_model : planning start state
-value_function --> transition_model : value predictions
-transition_model --> planning_update : plan result
-planning_update --> reactive_policy : planning advice
+step_memory --> transition
+time_step -right-> transition : reward, terminated,\ninfo
+subjective_state --> transition
+transition --> value_function : update value estimates
+transition --> transition_model : update transition model
+transition --> reactive_policy : update policy
 
-subjective_state --> reactive_policy : decision context
+subjective_state --> transition_model
+value_function --> transition_model
+transition_model --> planning_update : plan
+planning_update --> reactive_policy
+
+subjective_state --> reactive_policy
 reactive_policy --> action : primitive action
-action -down-> caller : AgentStepResult.action
+action -down-> world : takes action
 
 note right of transition
 Built inside OaKAgent.step(...)
 only when a previous state/action exists.
 end note
 
-note bottom
-This is the default conceptual surface of OaK:
-OaKAgent coordinates four main interfaces.
-It shows the four slots and the main data flow, not every method.
-For the fine-grained interface inventory, see oak_architecture.
-end note
+'note bottom
+'This is the default conceptual surface of OaK:
+'OaKAgent coordinates four main interfaces.
+'It shows the four slots and the main data flow, not every method.
+'For the fine-grained interface inventory, see oak_architecture.
+'end note
 
 @enduml

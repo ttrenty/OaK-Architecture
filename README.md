@@ -9,7 +9,7 @@ in code as `import oak`.
 The repository focuses on two things:
 
 - a small, typed core package that defines the shared data structures,
-  component interfaces, and the canonical `OaKAgent` step loop
+  component interfaces, and the concrete class `OaKAgent` that uses those interfaces.
 - external example implementations that show how a separate project can build
   on top of those interfaces
 
@@ -17,9 +17,22 @@ The goal is to make comparative implementation work **possible**. The package
 provides the contracts and runtime wiring; concrete learning systems can live
 outside the package and evolve independently.
 
+## Documentation
+
+Project documentation is published at:
+
+- [GitHub Pages documentation](https://ttrenty.github.io/OaK-Architecture/)
+
+The docs include:
+
+- the API reference for `oakagent` (Use `import oak` in your code)
+- the architecture guide embedded directly into that API page
+- rendered diagrams for the default four-interface view, the fine-grained
+  slot map, and the runtime call paths
+
 ## Current scope
 
-The published package is intentionally interface-only. Concrete examples in
+The published package is intentionally interface-focused. Concrete examples in
 this repository live under `examples/` so they reflect how downstream users can
 implement the architecture in practice.
 
@@ -40,20 +53,15 @@ In other words, you can either:
 
 This repository currently provides:
 
-- shared types such as `TimeStep`, `Transition`, `PlanningUpdate`, and
-  `AgentStepResult`
 - abstract interfaces for the four main OaK components
 - a `World` protocol that environments must implement for use with
   `OaKAgent.train()`
-- an optional `oak.fine_grained` submodule with lower-level
-  building blocks and `Composite*` implementations
 - the package's official `OaKAgent` coordinator that wires those components
   together, including a built-in `train()` method for running the standard
   episode loop on any `World`
 - two minimal external example implementations used as smoke tests:
   one direct and one fine-grained
-- a full learning agent example for RL worlds, demonstrated on CartPole
-  (see below)
+- a full learning agent example for RL worlds, demonstrated on Gymnasium Environment and ARC-AGI-3 (see below)
 
 ## Example 01
 
@@ -113,41 +121,6 @@ startup instant and training deterministic from step one.
    number of episodes. The world must implement the ``World`` protocol from
    ``oak.interfaces``.
 
-### Running
-
-```bash
-# Smoke-only checks in the default environment
-pixi run tests
-
-# Example 01 CartPole runners require a torch-enabled environment.
-# Use `linux-gpu` on Linux GPU systems or `macos` on Apple Silicon.
-pixi run -e linux-gpu test_example_01_cartpole
-pixi run -e linux-gpu test_example_01_cartpole_described
-pixi run -e linux-gpu test_example_01_integration
-
-# Custom training
-PYTHONPATH=src pixi run -e linux-gpu python -c "
-from examples.example_01 import DescribedGymWorld, run_training
-import torch
-
-def log_episode(episode, reward, avg_reward, agent):
-    if episode % 10 == 0:
-        print(f'episode={episode} reward={reward:.1f} avg={avg_reward:.1f}')
-
-run_training(
-    DescribedGymWorld('CartPole-v1'),
-    num_episodes=1000,
-    solved_threshold=475.0,
-    planning_budget=5,
-    episode_logger=log_episode,
-    device=torch.device('cuda'),
-)
-"
-
-# Fast component tests only (seconds, no full training)
-pixi run -e linux-gpu test_debug_example_01_cartpole
-```
-
 ### Ollama setup
 
 The LLM analysis step calls ollama at `http://172.26.64.1:11434` (WSL2
@@ -163,9 +136,64 @@ pixi run test_llm_connection
 OLLAMA_HOST=http://localhost:11434 OAK_LLM_MODEL=qwen3.5:9b pixi run test_llm_connection
 ```
 
+### Running
+
+```bash
+# Smoke-only checks in the default environment
+pixi run tests
+
+# Example 01 CartPole runners require a torch-enabled environment.
+# Use `linux-gpu` on Linux GPU systems or `macos` on Apple Silicon.
+pixi run -e linux-gpu test_example_01_cartpole
+pixi run -e linux-gpu test_example_01_cartpole_described
+pixi run -e linux-gpu test_example_01_integration
+
+# Fast component tests only (seconds, no full training)
+pixi run -e linux-gpu test_debug_example_01_cartpole
+```
+
+### ARC-AGI-3 benchmark
+
+The ARC benchmark now supports explicit ARC Prize API configuration and a
+development-oriented local pretraining pass.
+
+Important distinction:
+
+- `ARC_API_KEY` is for the ARC Prize environment API / scorecards ([https://docs.arcprize.org/api-keys](https://docs.arcprize.org/api-keys)).
+- It does **not** provide LLM inference. The current ARC benchmark does not use
+  the `example_01` Ollama feature-analysis path for action selection.
+
+Recommended local benchmark run:
+
+```bash
+OPERATION_MODE=offline \
+OAK_ARC_PRETRAIN_EPISODES=12 \
+pixi run -e linux-gpu benchmark_arc_agi
+```
+
+Run against the hosted ARC service with your API key:
+
+```bash
+export ARC_API_KEY="your-api-key-here"
+OAK_ARC_OPERATION_MODE=online \
+OAK_ARC_PRETRAIN_EPISODES=12 \
+pixi run -e linux-gpu benchmark_arc_agi
+```
+
+Useful ARC-specific knobs:
+
+- `OAK_ARC_OPERATION_MODE=offline|normal|online`
+- `ARC_API_KEY` or `OAK_ARC_API_KEY`
+- `OAK_ARC_PRETRAIN_EPISODES=12` to warm up on local copies before the scored run
+- `OAK_ARC_TRAIN_ENCODER=1` to train the CNN encoder instead of using frozen random features
+- `OAK_ARC_PLANNING_WARMUP=32` so Dyna planning can activate within short ARC episodes
+- `OAK_ARC_GREEDY_EVAL=1` to disable epsilon exploration for the scored pass
+
 ### Hyperparameters
 
 The main knobs to tune, organized by module:
+
+---
 
 **`run_training()` in `runner.py`**
 
@@ -176,15 +204,20 @@ The main knobs to tune, organized by module:
 | `average_window` | 100 | Window size used for rolling-average tracking |
 | `solved_threshold` | `None` | Early-stop when the `average_window` average reaches this |
 | `planning_budget` | 5 | Dyna-Q rollouts per step (0 = disable planning) |
+| `planning_warmup_steps` | 500 | Number of real transitions before planning activates |
 | `ollama_model` | `"qwen3.5:9b"` | Ollama model for feature analysis (discovery mode only) |
 | `train_encoder` | `False` | Whether to train the encoder (identity encoder has no params) |
 | `episode_logger` | `None` | Optional callback `(episode, reward, avg_reward, agent)` for user-owned per-episode logging |
+
+---
 
 **`build_agent()` in `runner.py`**
 
 | Parameter | Default | Description |
 |---|---|---|
 | `feature_budget` | 2 | Features processed per step (= number of options created) |
+
+--- 
 
 **`OptionCriticPolicy` in `reactive_policy.py`**
 
@@ -198,6 +231,8 @@ The main knobs to tune, organized by module:
 | `buffer_capacity` | 5000 | Replay buffer size for option Q-learning |
 | `batch_size` | 64 | Mini-batch size for DQN updates |
 
+---
+
 **`OptionValueFunction` in `value_function.py`**
 
 | Parameter | Default | Description |
@@ -206,6 +241,8 @@ The main knobs to tune, organized by module:
 | `buffer_capacity` | 5000 | Replay buffer size for Q_Omega |
 | `target_sync_freq` | 200 | Hard target network sync interval |
 | `max_options` | 8 | Maximum number of option slots |
+
+---
 
 **`DynaTransitionModel` in `transition_model.py`**
 
@@ -253,19 +290,6 @@ increasing `epsilon_end` to 0.05 (more stable but lower peak),
 Polyak averaging for target networks (code exists in
 `_OptionNetworks.soft_update_target()`), or Double DQN (select action
 with online network, evaluate with target network).
-
-## Documentation
-
-Project documentation is published at:
-
-- [GitHub Pages documentation](https://ttrenty.github.io/OaK-Architecture/)
-
-The docs include:
-
-- the API reference for `oakagent` (Use `import oak` in your code)
-- the architecture guide embedded directly into that API page
-- rendered diagrams for the default four-interface view, the fine-grained
-  slot map, and the runtime call paths
 
 ## Development
 

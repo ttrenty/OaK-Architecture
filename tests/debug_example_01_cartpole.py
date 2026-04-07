@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from typing import cast
 
 from examples.example_01.perception import AdaptivePerception
 from examples.example_01.reactive_policy import OptionCriticPolicy
@@ -593,6 +594,7 @@ def test_transition_model_module() -> None:
                 reward=ACTION_REWARDS[action],
                 next_subjective_state=next_state,
                 terminated=False,
+                option_id=option_id,
             )
         )
         loss_history.append(float(transition_model._model_loss))
@@ -651,6 +653,70 @@ def test_transition_model_module() -> None:
     print(f"PASS: transition-model diagnostics saved to {module_dir}")
 
 
+def test_planner_value_handoff_respects_option_identity() -> None:
+    """Planning should update the option that generated the sampled transition."""
+    _set_seed(DEFAULT_SEED)
+    agent = _build_cartpole_agent(device=_device())
+    _, _, value_function, transition_model = _unwrap_modules(agent)
+
+    source_option_id = "option:planner_source"
+    stale_option_id = "option:planner_stale"
+    source_option_idx = value_function.register_option(source_option_id)
+    stale_option_idx = value_function.register_option(stale_option_id)
+
+    warmup_updates = max(DEFAULT_MODEL_UPDATES, 560)
+    for _ in range(warmup_updates):
+        transition_model.update(
+            Transition(
+                subjective_state=REFERENCE_STATE,
+                action=1,
+                reward=ACTION_REWARDS[1],
+                next_subjective_state=REFERENCE_STATE + ACTION_DELTAS[1],
+                terminated=False,
+                option_id=source_option_id,
+            )
+        )
+
+    output_head = cast(torch.nn.Linear, value_function._q_net.net[-1])
+    before_weight = output_head.weight.detach().clone()
+    before_bias = output_head.bias.detach().clone()
+
+    # Simulate a stale "last selected option" that does not match the sampled model data.
+    value_function.set_last_option_idx(stale_option_idx)
+    planning = transition_model.plan(REFERENCE_STATE, value_function, budget=1)
+
+    after_weight = output_head.weight.detach().clone()
+    after_bias = output_head.bias.detach().clone()
+
+    source_row_change = float(
+        torch.norm(after_weight[source_option_idx] - before_weight[source_option_idx])
+        + torch.abs(after_bias[source_option_idx] - before_bias[source_option_idx])
+    )
+    stale_row_change = float(
+        torch.norm(after_weight[stale_option_idx] - before_weight[stale_option_idx])
+        + torch.abs(after_bias[stale_option_idx] - before_bias[stale_option_idx])
+    )
+
+    module_dir = _module_dir("planner_value_handoff")
+    _write_json(
+        module_dir / "summary.json",
+        {
+            "warmup_updates": warmup_updates,
+            "planning_steps": planning.search_statistics.get("planning_steps", 0),
+            "source_option_id": source_option_id,
+            "stale_option_id": stale_option_id,
+            "source_row_change": source_row_change,
+            "stale_row_change": stale_row_change,
+        },
+    )
+
+    assert planning.search_statistics.get("planning_steps", 0) == 1
+    assert source_row_change > 0.0
+    assert stale_row_change < 1e-9
+
+    print(f"PASS: planner/value handoff diagnostics saved to {module_dir}")
+
+
 def main() -> None:
     tests = [
         test_build_agent_components,
@@ -658,6 +724,7 @@ def main() -> None:
         test_value_function_module,
         test_reactive_policy_module,
         test_transition_model_module,
+        test_planner_value_handoff_respects_option_identity,
     ]
 
     results: dict[str, bool] = {}

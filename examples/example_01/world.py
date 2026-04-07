@@ -10,10 +10,11 @@ from typing import Any, Mapping
 
 import gymnasium as gym
 
+from oak.interfaces import World
 from oak.types import TimeStep
 
 
-class GymWorld:
+class GymWorld(World[Any, object, dict[str, Any]]):
     """Thin gymnasium wrapper for any environment, with no metadata exposure."""
 
     def __init__(
@@ -25,11 +26,11 @@ class GymWorld:
         self.env_id = env_id
         self.env = gym.make(env_id, **dict(make_kwargs or {}))
 
-    def reset(self) -> TimeStep:
+    def reset(self) -> TimeStep[Any, dict[str, Any]]:
         obs, info = self.env.reset()
         return TimeStep(observation=obs, reward=0.0, info=info)
 
-    def step(self, action: object) -> TimeStep:
+    def step(self, action: object) -> TimeStep[Any, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
         return TimeStep(
             observation=obs,

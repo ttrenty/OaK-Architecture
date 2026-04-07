@@ -68,6 +68,7 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
 
     last_action: ActionT | None = None
     last_subjective_state: SubjectiveStateT | None = None
+    last_active_option_id: OptionId | None = None
 
     def __init__(
         self,
@@ -88,6 +89,7 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
         self.option_stop_threshold = option_stop_threshold
         self.last_action = None
         self.last_subjective_state = None
+        self.last_active_option_id = None
 
     def __post_init__(self):
         """Validate that the modules are compatible."""
@@ -104,6 +106,7 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
         self.reactive_policy.clear_active_option()
         self.last_action = None
         self.last_subjective_state = None
+        self.last_active_option_id = None
 
     def step(
         self, time_step: TimeStep[ObservationT, InfoT]
@@ -133,6 +136,7 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
                 reward=time_step.reward,
                 next_subjective_state=subjective_state,
                 terminated=time_step.terminated or time_step.truncated,
+                option_id=self.last_active_option_id,
                 info=time_step.info,
             )
             td_errors = self.value_function.update(transition)
@@ -183,6 +187,7 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
         # ================== Update Memory ================== #
         self.last_subjective_state = subjective_state
         self.last_action = action
+        self.last_active_option_id = active_option_id
 
         if time_step.terminated or time_step.truncated:
             self.reactive_policy.clear_active_option()

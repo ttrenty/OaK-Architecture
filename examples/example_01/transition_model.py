@@ -71,20 +71,22 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
         lr: float = 1e-3,
         buffer_capacity: int = 5_000,
         model_train_batch: int = 32,
+        planning_warmup_steps: int = 500,
         device: torch.device | None = None,
     ) -> None:
         self._state_dim = state_dim
         self._num_actions = num_actions
         self._model_train_batch = model_train_batch
+        self._planning_warmup_steps = max(model_train_batch, planning_warmup_steps)
         self._device = device or torch.device("cpu")
 
         self._model = _WorldModelNetwork(state_dim, num_actions).to(self._device)
         self._optimizer = torch.optim.Adam(self._model.parameters(), lr=lr)
 
         # Store real transitions for model training and planning sampling
-        self._buffer: deque[tuple[torch.Tensor, int, float, torch.Tensor, bool]] = (
-            deque(maxlen=buffer_capacity)
-        )
+        self._buffer: deque[
+            tuple[torch.Tensor, int, float, torch.Tensor, bool, OptionId | None]
+        ] = deque(maxlen=buffer_capacity)
         self._model_loss: float = 0.0
         self._step_count = 0
 
@@ -101,8 +103,9 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
         action = int(transition.action)
         reward = transition.reward
         done = transition.terminated
+        option_id = transition.option_id
 
-        self._buffer.append((state, action, reward, next_state, done))
+        self._buffer.append((state, action, reward, next_state, done, option_id))
         self._step_count += 1
 
         # Train world model on mini-batch from buffer
@@ -121,8 +124,13 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
         """Dyna-Q planning: generate imagined transitions and update values."""
         # Don't plan until the world model has enough training data
         # to produce useful predictions (avoids corrupting Q-values early)
-        min_warmup = max(self._model_train_batch, 500)
-        if self._step_count < min_warmup:
+        if self._step_count < self._planning_warmup_steps:
+            return PlanningUpdate(
+                search_statistics={"planning_steps": 0, "model_loss": self._model_loss}
+            )
+
+        eligible_transitions = [entry for entry in self._buffer if entry[5] is not None]
+        if not eligible_transitions:
             return PlanningUpdate(
                 search_statistics={"planning_steps": 0, "model_loss": self._model_loss}
             )
@@ -130,8 +138,7 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
         planning_steps = 0
         for _ in range(budget):
             # Sample a past state and action from experience
-            idx = random.randrange(len(self._buffer))
-            state, action, _, _, _ = self._buffer[idx]
+            state, action, _, _, _, option_id = random.choice(eligible_transitions)
 
             # Predict next state and reward using the world model
             with torch.no_grad():
@@ -147,6 +154,7 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
                 reward=reward_pred.item(),
                 next_subjective_state=next_state_pred,
                 terminated=False,  # imagined transitions are not terminal
+                option_id=option_id,
             )
             value_function.update(synthetic, planning=True)
             planning_steps += 1

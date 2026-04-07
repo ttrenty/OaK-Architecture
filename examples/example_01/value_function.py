@@ -21,6 +21,7 @@ from oak.types import (
     ComponentKind,
     CurationDecision,
     GeneralValueFunctionId,
+    OptionId,
     Transition,
     UsageRecord,
     UtilityRecord,
@@ -197,11 +198,15 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         state = transition.subjective_state
         next_state = transition.next_subjective_state
         done = transition.terminated
+        option_idx = self._resolve_option_idx(transition.option_id)
+
+        if option_idx is None:
+            return {}
 
         # Only store real transitions in replay buffer (not synthetic from planning)
         if not planning:
             self._buffer.push(
-                state, self._last_option_idx, transition.reward, next_state, done
+                state, option_idx, transition.reward, next_state, done
             )
 
         td_errors: dict[str, float] = {}
@@ -221,7 +226,7 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
                 q_next_max = q_next_masked[mask].max().item()
             else:
                 q_next_max = 0.0
-            q_active = q_current[self._last_option_idx].item()
+            q_active = q_current[option_idx].item()
             advantage = (
                 transition.reward
                 + self._gamma * q_next_max * (1.0 - float(done))
@@ -232,7 +237,13 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         if planning:
             # Planning: do a single online TD update from the synthetic transition
             # (don't trigger full buffer-based learning to avoid overtraining)
-            self._online_td_update(state, next_state, done, transition.reward)
+            self._online_td_update(
+                state,
+                next_state,
+                done,
+                transition.reward,
+                option_idx,
+            )
         else:
             # Q_Omega learning from replay
             if len(self._buffer) >= self._batch_size:
@@ -330,11 +341,11 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         next_state: torch.Tensor,
         done: bool,
         reward: float,
+        option_idx: int,
     ) -> None:
         """Single online TD update for Dyna-Q planning (no replay buffer)."""
         s = state.to(self._device)
         ns = next_state.to(self._device)
-        option_idx = self._last_option_idx
 
         q_all = self._q_net(s)
         q_current = q_all[option_idx]
@@ -394,6 +405,19 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         # Return per-option TD errors for the batch (mean)
         td = (targets - q_taken).detach()
         return {"q_omega_td": td.mean().item()}
+
+    def _resolve_option_idx(self, option_id: OptionId | None) -> int | None:
+        """Resolve which option slot should receive credit for this transition."""
+        if option_id is not None:
+            return self.option_idx_for(option_id)
+
+        if (
+            0 <= self._last_option_idx < self._max_options
+            and self._option_mask[self._last_option_idx]
+        ):
+            return self._last_option_idx
+
+        return None
 
     def _learn_gvfs(
         self, transition: Transition[Any, torch.Tensor, dict[str, Any]]
