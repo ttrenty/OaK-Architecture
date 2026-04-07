@@ -42,6 +42,7 @@ def build_agent(
     *,
     train_encoder: bool = False,
     planning_budget: int = 5,
+    planning_warmup_steps: int = 500,
     feature_budget: int = 2,
     device: torch.device | None = None,
 ) -> OaKAgent:
@@ -62,11 +63,22 @@ def build_agent(
     # Create encoder: latent_dim depends on encoder type
     if encoder_type == "identity":
         latent_dim = obs_dim
+    elif encoder_type == "cnn":
+        latent_dim = config.get("latent_dim", 128)
     else:
         latent_dim = config.get("latent_dim", max(obs_dim * 4, 32))
 
+    # For CNN, determine input channels from observation shape.
+    input_channels = 3
+    if encoder_type == "cnn" and len(obs_shape) >= 3:
+        input_channels = obs_shape[-1]  # (H, W, C) convention
+
     encoder = create_encoder(
-        encoder_type, obs_dim, latent_dim=latent_dim, trainable=train_encoder
+        encoder_type,
+        obs_dim,
+        latent_dim=latent_dim,
+        trainable=train_encoder,
+        input_channels=input_channels,
     )
 
     # If no features provided, create generic per-dimension features
@@ -96,6 +108,7 @@ def build_agent(
     transition_model = DynaTransitionModel(
         state_dim=latent_dim,
         num_actions=action_n,
+        planning_warmup_steps=planning_warmup_steps,
         device=device,
     )
 
@@ -212,6 +225,7 @@ def run_training(
     ollama_model: str = "qwen3.5:9b",
     train_encoder: bool = False,
     planning_budget: int = 5,
+    planning_warmup_steps: int = 500,
     episode_logger: Callable[[int, float, float, OaKAgent], None] | None = None,
     verbose: bool = True,
     device: torch.device | None = None,
@@ -244,6 +258,8 @@ def run_training(
         Whether to train the encoder via reconstruction loss.
     planning_budget:
         Number of Dyna-Q imagined rollouts per step.
+    planning_warmup_steps:
+        Number of real transitions to observe before planning is enabled.
     episode_logger:
         Optional callback `(episode, episode_reward, avg_reward, agent)` used
         for per-episode logging or other user-controlled training hooks.
@@ -286,6 +302,7 @@ def run_training(
         config,
         train_encoder=train_encoder,
         planning_budget=planning_budget,
+        planning_warmup_steps=planning_warmup_steps,
         device=device,
     )
 

@@ -101,6 +101,7 @@ class Transition(Generic[ActionT, SubjectiveStateT, InfoT]):
     reward: float
     next_subjective_state: SubjectiveStateT
     terminated: bool = False
+    option_id: OptionId | None = None
     info: InfoT | None = None
 
 
