@@ -1,83 +1,74 @@
-"""Gymnasium world wrappers with embedded observation/action descriptions.
+"""Gymnasium world wrappers with embedded structured world descriptions.
 
-Unlike `world.py` (which exposes no metadata), this wrapper provides a
-`WorldDescription` that tells the agent what it needs to know about the
-observation and action spaces up front, so no trial-and-error discovery is
-needed.
-
-Any world that exposes a `description` attribute (a `WorldDescription`)
-will automatically use the described config path in `run_training()`.
+Unlike `world.py` (which exposes only raw observations), this wrapper
+embeds a `WorldDescription` that gives the startup planner a typed
+observation-channel schema and action metadata up front.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any, Generic, TypeVar, cast
 
 import gymnasium as gym
 
 from oak.interfaces import World
 from oak.types import TimeStep
 
+from .schema import (
+    ActionDescription,
+    ObservationChannelDescription,
+    SemanticFieldPlan,
+    WorldDescription,
+)
 
-@dataclass(frozen=True)
-class WorldDescription:
-    """Metadata that describes the observation and action spaces.
 
-    This is the information the discovery approach learns through
-    trial-and-error.  The embedded approach provides it directly.
-    """
-
-    obs_type: str
-    obs_shape: tuple[int, ...]
-    obs_dtype: str
-    action_type: str
-    action_n: int
-    encoder_type: str
-    features: list[dict[str, Any]] = field(default_factory=list)
-
-    def to_config(self) -> dict[str, Any]:
-        """Convert to the config dict expected by `build_agent`."""
-        return {
-            "obs_type": self.obs_type,
-            "obs_shape": self.obs_shape,
-            "obs_dtype": self.obs_dtype,
-            "action_type": self.action_type,
-            "action_n": self.action_n,
-            "encoder_type": self.encoder_type,
-            "features": list(self.features),
-        }
+GymObsT = TypeVar("GymObsT")
+GymActionT = TypeVar("GymActionT")
 
 
 CARTPOLE_WORLD_DESCRIPTION = WorldDescription(
-    obs_type="numeric_vector",
-    obs_shape=(4,),
-    obs_dtype="float32",
-    action_type="discrete",
-    action_n=2,
-    encoder_type="identity",
-    features=[
-        {
-            "id": "cart_position",
-            "name": "Cart position",
-            "description": "Horizontal position of the cart on the track",
-        },
-        {
-            "id": "cart_velocity",
-            "name": "Cart velocity",
-            "description": "Horizontal velocity of the cart",
-        },
-        {
-            "id": "pole_angle",
-            "name": "Pole angle",
-            "description": "Angle of the pole from vertical (radians)",
-        },
-        {
-            "id": "pole_angular_velocity",
-            "name": "Pole angular velocity",
-            "description": "Angular velocity of the pole tip",
-        },
-    ],
+    observation_channels=(
+        ObservationChannelDescription(
+            channel_id="main",
+            kind="raw_values",
+            shape=(4,),
+            dtype="float32",
+            description="CartPole state vector from Gymnasium.",
+            value_names=(
+                "cart_position",
+                "cart_velocity",
+                "pole_angle",
+                "pole_angular_velocity",
+            ),
+            encoder_hint="identity",
+        ),
+    ),
+    action=ActionDescription(
+        action_type="discrete",
+        action_n=2,
+        labels=("push_left", "push_right"),
+        description="Push the cart left or right.",
+    ),
+    default_encoder_type="identity",
+    feature_hints=(
+        SemanticFieldPlan(
+            field_id="cart_motion",
+            name="Cart motion",
+            source_channel="main",
+            description="Horizontal cart position and velocity.",
+            selector_names=("cart_position", "cart_velocity"),
+        ),
+        SemanticFieldPlan(
+            field_id="pole_balance",
+            name="Pole balance",
+            source_channel="main",
+            description="Pole angle and angular velocity.",
+            selector_names=("pole_angle", "pole_angular_velocity"),
+        ),
+    ),
+    notes="Bundled CartPole description with grouped raw-value semantics.",
+    metadata={"env_id": "CartPole-v1"},
 )
 
 _KNOWN_WORLD_DESCRIPTIONS: dict[str, WorldDescription] = {
@@ -85,12 +76,15 @@ _KNOWN_WORLD_DESCRIPTIONS: dict[str, WorldDescription] = {
 }
 
 
-class DescribedGymWorld(World[Any, object, dict[str, Any]]):
+class DescribedGymWorld(
+    World[GymObsT, GymActionT, dict[str, Any]],
+    Generic[GymObsT, GymActionT],
+):
     """Gymnasium wrapper with an embedded `WorldDescription`.
 
     Functionally identical to `GymWorld` for `reset()`/`step()`, but also
     exposes a `.description` attribute that the runner can read instead of
-    running the discovery phase.
+    inferring the observation/action schema from raw samples.
     """
 
     def __init__(
@@ -109,13 +103,16 @@ class DescribedGymWorld(World[Any, object, dict[str, Any]]):
 
         self.env_id = env_id
         self.description = resolved_description
-        self.env = gym.make(env_id, **dict(make_kwargs or {}))
+        self.env: gym.Env[GymObsT, GymActionT] = cast(
+            gym.Env[GymObsT, GymActionT],
+            gym.make(env_id, **dict(make_kwargs or {})),
+        )
 
-    def reset(self) -> TimeStep[Any, dict[str, Any]]:
+    def reset(self) -> TimeStep[GymObsT, dict[str, Any]]:
         obs, info = self.env.reset()
         return TimeStep(observation=obs, reward=0.0, info=info)
 
-    def step(self, action: object) -> TimeStep[Any, dict[str, Any]]:
+    def step(self, action: GymActionT) -> TimeStep[GymObsT, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
         return TimeStep(
             observation=obs,

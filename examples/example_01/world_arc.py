@@ -26,7 +26,12 @@ from oak.types import TimeStep
 import arc_agi
 from arcengine.enums import GameAction, GameState, FrameDataRaw
 
-from .world_embedded import WorldDescription
+from .schema import (
+    ActionDescription,
+    ObservationChannelDescription,
+    SemanticFieldPlan,
+    WorldDescription,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -82,24 +87,36 @@ def _grid_from_obs(
 def arc_world_description(action_n: int) -> WorldDescription:
     """Build a ``WorldDescription`` for an ARC-AGI-3 keyboard environment."""
     return WorldDescription(
-        obs_type="grid",
-        obs_shape=(GRID_SIZE, GRID_SIZE, NUM_COLORS),
-        obs_dtype="float32",
-        action_type="discrete",
-        action_n=action_n,
-        encoder_type="cnn",
-        features=[
-            {
-                "id": "grid_pattern",
-                "name": "Grid pattern",
-                "description": "Spatial color pattern on the 64x64 grid",
-            },
-            {
-                "id": "grid_change",
-                "name": "Grid change",
-                "description": "Difference in grid state between steps",
-            },
-        ],
+        observation_channels=(
+            ObservationChannelDescription(
+                channel_id="grid",
+                kind="image",
+                shape=(GRID_SIZE, GRID_SIZE, NUM_COLORS),
+                dtype="float32",
+                description="One-hot ARC grid with 16 color channels.",
+                encoder_hint="cnn",
+            ),
+        ),
+        action=ActionDescription(
+            action_type="discrete",
+            action_n=action_n,
+            description="Discrete keyboard actions supported by the ARC environment.",
+        ),
+        default_encoder_type="cnn",
+        feature_hints=(
+            SemanticFieldPlan(
+                field_id="grid_pattern",
+                name="Grid pattern",
+                source_channel="grid",
+                description="Spatial color pattern on the 64x64 grid.",
+            ),
+            SemanticFieldPlan(
+                field_id="grid_change",
+                name="Grid change",
+                source_channel="grid",
+                description="Difference in grid state between steps.",
+            ),
+        ),
     )
 
 

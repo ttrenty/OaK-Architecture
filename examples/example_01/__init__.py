@@ -14,6 +14,10 @@ from typing import Any
 __all__ = [
     "build_agent",
     "run_training",
+    "AgentObservation",
+    "ExampleAgentSpec",
+    "ExampleSubjectiveState",
+    "PerceptionPlan",
     "GymWorld",
     "DescribedGymWorld",
     "CARTPOLE_WORLD_DESCRIPTION",
@@ -32,10 +36,23 @@ def __getattr__(name: str) -> Any:
             "build_agent": build_agent,
             "run_training": run_training,
         }
-    elif name == "GymWorld":
+    elif name in {
+        "AgentObservation",
+        "ExampleAgentSpec",
+        "ExampleSubjectiveState",
+        "PerceptionPlan",
+        "GymWorld",
+    }:
+        from .schema import AgentObservation, ExampleAgentSpec, ExampleSubjectiveState, PerceptionPlan
         from .world import GymWorld
 
-        exports = {"GymWorld": GymWorld}
+        exports = {
+            "AgentObservation": AgentObservation,
+            "ExampleAgentSpec": ExampleAgentSpec,
+            "ExampleSubjectiveState": ExampleSubjectiveState,
+            "PerceptionPlan": PerceptionPlan,
+            "GymWorld": GymWorld,
+        }
     elif name in {
         "DescribedGymWorld",
         "CARTPOLE_WORLD_DESCRIPTION",

@@ -27,6 +27,8 @@ from oak.types import (
     UtilityRecord,
 )
 
+from .schema import ExampleSubjectiveState, StateTensorAdapter
+
 
 class _QOmegaNetwork(nn.Module):
     """MLP that outputs Q-values for each option slot."""
@@ -80,7 +82,7 @@ class ReplayBuffer:
         return len(self._buf)
 
 
-class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
+class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, Any]]):
     """DQN-style value function over option slots with auxiliary GVF heads.
 
     Parameters
@@ -102,6 +104,7 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         batch_size: int = 64,
         target_sync_freq: int = 200,
         device: torch.device | None = None,
+        state_adapter: StateTensorAdapter | None = None,
     ) -> None:
         self._state_dim = state_dim
         self._max_options = max_options
@@ -109,6 +112,7 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         self._batch_size = batch_size
         self._target_sync_freq = target_sync_freq
         self._device = device or torch.device("cpu")
+        self._state_adapter = state_adapter or StateTensorAdapter()
 
         # Q_Omega networks
         self._q_net = _QOmegaNetwork(state_dim, max_options).to(self._device)
@@ -191,12 +195,12 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
 
     def update(
         self,
-        transition: Transition[Any, torch.Tensor, dict[str, Any]],
+        transition: Transition[Any, ExampleSubjectiveState, dict[str, Any]],
         *,
         planning: bool = False,
     ) -> Mapping[GeneralValueFunctionId, float]:
-        state = transition.subjective_state
-        next_state = transition.next_subjective_state
+        state = self._state_adapter.tensor(transition.subjective_state)
+        next_state = self._state_adapter.tensor(transition.next_subjective_state)
         done = transition.terminated
         option_idx = self._resolve_option_idx(transition.option_id)
 
@@ -261,9 +265,9 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
 
     def predict(
         self,
-        subjective_state: torch.Tensor,
+        subjective_state: ExampleSubjectiveState,
     ) -> Mapping[GeneralValueFunctionId, float]:
-        s = subjective_state.to(self._device)
+        s = self._state_adapter.tensor(subjective_state).to(self._device)
         with torch.no_grad():
             q_values = self._q_net(s)
 
@@ -420,14 +424,14 @@ class OptionValueFunction(ValueFunction[torch.Tensor, Any, dict[str, Any]]):
         return None
 
     def _learn_gvfs(
-        self, transition: Transition[Any, torch.Tensor, dict[str, Any]]
+        self, transition: Transition[Any, ExampleSubjectiveState, dict[str, Any]]
     ) -> dict[str, float]:
         """Online GVF updates (one transition)."""
         if not self._gvf_heads or self._gvf_optim is None:
             return {}
 
-        state = transition.subjective_state.to(self._device)
-        next_state = transition.next_subjective_state.to(self._device)
+        state = self._state_adapter.tensor(transition.subjective_state).to(self._device)
+        next_state = self._state_adapter.tensor(transition.next_subjective_state).to(self._device)
         done = transition.terminated
 
         errors: dict[str, float] = {}

@@ -29,6 +29,7 @@ from oak.types import (
 )
 
 from .value_function import OptionValueFunction
+from .schema import ExampleSubjectiveState, StateTensorAdapter
 
 
 class _OptionNetworks(nn.Module):
@@ -83,7 +84,7 @@ class _OptionNetworks(nn.Module):
             return self.termination(state).item()
 
 
-class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
+class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, Any]]):
     """Option-Critic with DQN-style intra-option action learning.
 
     Each option has its own Q(s,a) network trained via DQN, providing
@@ -105,6 +106,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
         buffer_capacity: int = 5_000,
         batch_size: int = 64,
         device: torch.device | None = None,
+        state_adapter: StateTensorAdapter | None = None,
     ) -> None:
         self._value_function = value_function
         self._num_actions = num_actions
@@ -112,6 +114,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
         self._device = device or torch.device("cpu")
         self._gamma = gamma
         self._batch_size = batch_size
+        self._state_adapter = state_adapter or StateTensorAdapter()
 
         self._epsilon_start = epsilon_start
         self._epsilon_end = epsilon_end
@@ -146,7 +149,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
 
     def update(
         self,
-        transition: Transition[Any, torch.Tensor, dict[str, Any]],
+        transition: Transition[Any, ExampleSubjectiveState, dict[str, Any]],
         td_errors: Mapping[GeneralValueFunctionId, float],
     ) -> None:
         if not self._options or self._q_optimizer is None:
@@ -154,11 +157,11 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
         if self._active_option_id is None:
             return
 
-        state = transition.subjective_state
+        state = self._state_adapter.tensor(transition.subjective_state)
         action = (
             int(transition.action) if isinstance(transition.action, (int, float)) else 0
         )
-        next_state = transition.next_subjective_state
+        next_state = self._state_adapter.tensor(transition.next_subjective_state)
         done = transition.terminated
         reward = transition.reward
 
@@ -211,14 +214,14 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
 
     def select_action(
         self,
-        subjective_state: torch.Tensor,
+        subjective_state: ExampleSubjectiveState,
         option_stop_threshold: float,
     ) -> tuple[Any, OptionId | None]:
         # If no options exist, return random action
         if not self._options:
             return random.randrange(self._num_actions), None
 
-        s = subjective_state.to(self._device)
+        s = self._state_adapter.tensor(subjective_state).to(self._device)
 
         # Check if active option should continue
         if self._active_option_id is not None:
@@ -235,7 +238,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
             self._active_option_id = None
 
         # Select new option via Q_Omega (ε-greedy)
-        option_id = self._select_option(s)
+        option_id = self._select_option(subjective_state)
         self._active_option_id = option_id
 
         nets, slot_idx, _ = self._options[option_id]
@@ -286,7 +289,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
     # Internal: action selection
     # ------------------------------------------------------------------
 
-    def _select_option(self, state: torch.Tensor) -> OptionId:
+    def _select_option(self, state: ExampleSubjectiveState) -> OptionId:
         """Epsilon-greedy option selection using Q_Omega."""
         option_ids = list(self._options.keys())
 
@@ -366,7 +369,7 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
             self._q_optimizer.step()
 
     def _learn_termination(
-        self, transition: Transition[Any, torch.Tensor, dict[str, Any]]
+        self, transition: Transition[Any, ExampleSubjectiveState, dict[str, Any]]
     ) -> None:
         """Update termination condition for the active option."""
         if (
@@ -378,10 +381,10 @@ class OptionCriticPolicy(ReactivePolicy[torch.Tensor, Any, dict[str, Any]]):
             return
 
         nets, _, _ = self._options[self._active_option_id]
-        next_state = transition.next_subjective_state.to(self._device)
+        next_state = self._state_adapter.tensor(transition.next_subjective_state).to(self._device)
 
         # Advantage of terminating: V(s') - Q_Omega(s', current_option)
-        q_preds = self._value_function.predict(next_state)
+        q_preds = self._value_function.predict(transition.next_subjective_state)
         q_vals = [q_preds.get(f"q_{oid}", 0.0) for oid in self._options]
         q_current = q_preds.get(f"q_{self._active_option_id}", 0.0)
         v_next = max(q_vals) if q_vals else 0.0

@@ -1,12 +1,14 @@
-"""Gymnasium wrapper conforming to the OaK World protocol.
+"""Raw Gymnasium wrapper conforming to the OaK World protocol.
 
-The wrapper exposes no metadata about observation or action spaces.
-The agent must discover everything through interaction.
+This wrapper intentionally returns the original environment observations.
+Discovery and perception are responsible for turning those raw values into
+the normalized `AgentObservation` and structured subjective state.
 """
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any, Generic, TypeVar, cast
 
 import gymnasium as gym
 
@@ -14,8 +16,12 @@ from oak.interfaces import World
 from oak.types import TimeStep
 
 
-class GymWorld(World[Any, object, dict[str, Any]]):
-    """Thin gymnasium wrapper for any environment, with no metadata exposure."""
+GymObsT = TypeVar("GymObsT")
+GymActionT = TypeVar("GymActionT")
+
+
+class GymWorld(World[GymObsT, GymActionT, dict[str, Any]], Generic[GymObsT, GymActionT]):
+    """Thin Gymnasium wrapper with no embedded observation semantics."""
 
     def __init__(
         self,
@@ -24,13 +30,16 @@ class GymWorld(World[Any, object, dict[str, Any]]):
         make_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         self.env_id = env_id
-        self.env = gym.make(env_id, **dict(make_kwargs or {}))
+        self.env: gym.Env[GymObsT, GymActionT] = cast(
+            gym.Env[GymObsT, GymActionT],
+            gym.make(env_id, **dict(make_kwargs or {})),
+        )
 
-    def reset(self) -> TimeStep[Any, dict[str, Any]]:
+    def reset(self) -> TimeStep[GymObsT, dict[str, Any]]:
         obs, info = self.env.reset()
         return TimeStep(observation=obs, reward=0.0, info=info)
 
-    def step(self, action: object) -> TimeStep[Any, dict[str, Any]]:
+    def step(self, action: GymActionT) -> TimeStep[GymObsT, dict[str, Any]]:
         obs, reward, terminated, truncated, info = self.env.step(action)
         return TimeStep(
             observation=obs,

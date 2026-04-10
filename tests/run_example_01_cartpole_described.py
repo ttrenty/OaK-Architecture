@@ -43,10 +43,22 @@ def main() -> None:
     # Show the embedded world description
     desc = CARTPOLE_WORLD_DESCRIPTION
     print("World description:")
-    print(f"  obs_type={desc.obs_type}, obs_shape={desc.obs_shape}")
+    print(
+        "  channels="
+        + str(
+            [
+                {
+                    "channel_id": channel.channel_id,
+                    "kind": channel.kind,
+                    "shape": channel.shape,
+                }
+                for channel in desc.observation_channels
+            ]
+        )
+    )
     print(f"  action_type={desc.action_type}, action_n={desc.action_n}")
-    print(f"  encoder_type={desc.encoder_type}")
-    print(f"  features={[f['name'] for f in desc.features]}")
+    print(f"  default_encoder_type={desc.encoder_type}")
+    print(f"  feature_groups={[f['name'] for f in desc.features]}")
     print()
 
     world = DescribedGymWorld("CartPole-v1")

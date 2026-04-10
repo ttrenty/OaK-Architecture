@@ -39,7 +39,7 @@ cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole"
 [tasks.test_example_01_cartpole_described]
 cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described"
 
-[tasks.benchmark_arc_agi]
+[tasks.test_benchmark_arc_agi]
 cmd = "env PYTHONPATH=src python -m tests.benchmark_arc_agi"
 
 [tasks.tests]
