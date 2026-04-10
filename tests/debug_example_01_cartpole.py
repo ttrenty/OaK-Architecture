@@ -24,11 +24,13 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from typing import cast
+from typing import Any, cast
 
+from examples.example_01.encoders import CNNEncoder, MLPEncoder
 from examples.example_01.perception import AdaptivePerception
 from examples.example_01.reactive_policy import OptionCriticPolicy
 from examples.example_01.runner import build_agent
+from examples.example_01.schema import ExampleSubjectiveState, subjective_state_from_tensor
 from examples.example_01.transition_model import DynaTransitionModel
 from examples.example_01.value_function import OptionValueFunction
 from examples.example_01.world_embedded import (
@@ -47,6 +49,13 @@ from oak.types import (
 DEFAULT_SEED = int(os.environ.get("OAK_DEBUG_SEED", "7"))
 DEFAULT_DEVICE_NAME = os.environ.get("OAK_DEBUG_DEVICE", "cpu")
 DEFAULT_PERCEPTION_SAMPLES = int(os.environ.get("OAK_DEBUG_PERCEPTION_SAMPLES", "48"))
+DEFAULT_ENCODER_TRAIN_SAMPLES = int(
+    os.environ.get("OAK_DEBUG_ENCODER_TRAIN_SAMPLES", "24")
+)
+DEFAULT_ENCODER_TRAIN_EPOCHS = int(
+    os.environ.get("OAK_DEBUG_ENCODER_TRAIN_EPOCHS", "6")
+)
+DEFAULT_ENCODER_IMAGE_SIZE = int(os.environ.get("OAK_DEBUG_ENCODER_IMAGE_SIZE", "64"))
 DEFAULT_VALUE_UPDATES = int(os.environ.get("OAK_DEBUG_VALUE_UPDATES", "160"))
 DEFAULT_POLICY_UPDATES = int(os.environ.get("OAK_DEBUG_POLICY_UPDATES", "160"))
 DEFAULT_MODEL_UPDATES = int(os.environ.get("OAK_DEBUG_MODEL_UPDATES", "560"))
@@ -208,7 +217,7 @@ def _write_line_plot_svg(
 
 
 def _make_world(seed: int) -> DescribedGymWorld:
-    world = DescribedGymWorld("CartPole-v1")
+    world: DescribedGymWorld[Any, Any] = DescribedGymWorld("CartPole-v1")
     world.env.reset(seed=seed)
     if hasattr(world.env.action_space, "seed"):
         world.env.action_space.seed(seed)
@@ -219,6 +228,15 @@ def _make_world(seed: int) -> DescribedGymWorld:
 
 def _build_cartpole_agent(device: torch.device | None = None) -> OaKAgent:
     return build_agent(CARTPOLE_WORLD_DESCRIPTION.to_config(), device=device)
+
+
+def _build_trainable_agent(
+    config: dict[str, object],
+    *,
+    train_encoder: bool,
+    device: torch.device | None = None,
+) -> OaKAgent:
+    return build_agent(config, train_encoder=train_encoder, device=device)
 
 
 def _unwrap_modules(
@@ -273,6 +291,112 @@ def _collect_cartpole_observations(seed: int, sample_count: int) -> list[np.ndar
     return observations
 
 
+def _cartpole_observation_to_image(
+    observation: np.ndarray,
+    *,
+    image_size: int = DEFAULT_ENCODER_IMAGE_SIZE,
+) -> np.ndarray:
+    values = np.asarray(observation, dtype=np.float32)
+    x = np.linspace(-1.0, 1.0, image_size, dtype=np.float32)
+    y = np.linspace(-1.0, 1.0, image_size, dtype=np.float32)
+    xx, yy = np.meshgrid(x, y)
+
+    cart_position, cart_velocity, pole_angle, pole_velocity = values.tolist()
+    channel0 = 0.5 + 0.5 * np.tanh(3.0 * (cart_position * xx + pole_angle * yy))
+    channel1 = 0.5 + 0.5 * np.tanh(3.0 * (cart_velocity * yy - pole_velocity * xx))
+    wave = (1.5 + cart_position + pole_angle) * xx + (
+        1.5 + cart_velocity + pole_velocity
+    ) * yy
+    channel2 = 0.5 + 0.5 * np.sin(4.0 * wave)
+    image = np.stack([channel0, channel1, channel2], axis=-1)
+    return image.astype(np.float32)
+
+
+def _encoder_parameter_snapshot(module: torch.nn.Module) -> dict[str, torch.Tensor]:
+    return {
+        name: param.detach().cpu().clone()
+        for name, param in module.named_parameters()
+    }
+
+
+def _encoder_parameter_delta(
+    before: dict[str, torch.Tensor], module: torch.nn.Module
+) -> float:
+    delta = 0.0
+    current = dict(module.named_parameters())
+    for name, previous in before.items():
+        delta += float(torch.norm(current[name].detach().cpu() - previous).item())
+    return delta
+
+
+def _trainable_encoder_for(
+    perception: AdaptivePerception,
+) -> MLPEncoder | CNNEncoder:
+    encoder = perception._encoder
+    if isinstance(encoder, (MLPEncoder, CNNEncoder)):
+        return encoder
+    raise TypeError(f"Expected trainable MLP/CNN encoder, got {type(encoder)!r}")
+
+
+def _mean_reconstruction_loss(
+    encoder: MLPEncoder | CNNEncoder,
+    observations: list[np.ndarray],
+) -> float:
+    losses: list[float] = []
+    if isinstance(encoder, MLPEncoder):
+        if encoder.decoder is None:
+            raise AssertionError("MLP encoder decoder was not initialised")
+        with torch.no_grad():
+            for observation in observations:
+                x = encoder._to_tensor(observation)
+                z = encoder.encoder(x)
+                x_hat = encoder.decoder(z)
+                losses.append(float(torch.nn.functional.mse_loss(x_hat, x).item()))
+        return sum(losses) / len(losses)
+
+    encoder.encode(observations[0])
+    if encoder._decoder is None:
+        raise AssertionError("CNN encoder decoder was not initialised")
+    with torch.no_grad():
+        for observation in observations:
+            x = encoder._to_image_tensor(observation)
+            z = encoder._encode_batch(x)
+            x_hat = encoder._decoder(z)
+            if x_hat.shape[-2:] != x.shape[-2:]:
+                x_hat = torch.nn.functional.interpolate(
+                    x_hat,
+                    size=x.shape[-2:],
+                    mode="bilinear",
+                    align_corners=False,
+                )
+            losses.append(float(torch.nn.functional.mse_loss(x_hat, x).item()))
+    return sum(losses) / len(losses)
+
+
+def _train_encoder_via_perception(
+    perception: AdaptivePerception,
+    observations: list[np.ndarray],
+    *,
+    epochs: int,
+) -> tuple[torch.Tensor, list[float]]:
+    encoder = _trainable_encoder_for(perception)
+    loss_history = [_mean_reconstruction_loss(encoder, observations)]
+    last_latent = torch.zeros(0)
+
+    for epoch in range(epochs):
+        for index, observation in enumerate(observations):
+            last_action = (index + epoch) % 2
+            state = perception.update(
+                observation=observation,
+                reward=float(last_action),
+                last_action=last_action,
+            )
+            last_latent = state.tensor_view()
+        loss_history.append(_mean_reconstruction_loss(encoder, observations))
+
+    return last_latent, loss_history
+
+
 def _state_variant(step: int) -> torch.Tensor:
     offset = torch.tensor(
         [
@@ -286,13 +410,17 @@ def _state_variant(step: int) -> torch.Tensor:
     return REFERENCE_STATE + offset
 
 
+def _subjective_state(tensor: torch.Tensor) -> ExampleSubjectiveState:
+    return subjective_state_from_tensor(tensor, view_name="main")
+
+
 def _policy_snapshot(
     policy: OptionCriticPolicy,
     option_id: str,
-    subjective_state: torch.Tensor,
+    subjective_state: ExampleSubjectiveState,
 ) -> tuple[list[float], float]:
     nets, _, _ = policy._options[option_id]
-    device_state = subjective_state.to(policy._device)
+    device_state = policy._state_adapter.tensor(subjective_state).to(policy._device)
     with torch.no_grad():
         q_values = nets.q_values(device_state).detach().cpu().tolist()
     return [float(v) for v in q_values], float(nets.stop_prob(device_state))
@@ -306,7 +434,7 @@ def test_build_agent_components() -> None:
     )
 
     assert isinstance(agent, OaKAgent)
-    assert len(perception.list_features()) == 4
+    assert len(perception.list_features()) == 2
     assert reactive_policy._num_actions == 2
     assert value_function._state_dim == 4
     assert transition_model._state_dim == 4
@@ -325,25 +453,25 @@ def test_perception_module() -> None:
     )
     latent_series: list[list[float]] = [[], [], [], []]
     last_latent: torch.Tensor | None = None
+    last_state: ExampleSubjectiveState | None = None
 
     for index, observation in enumerate(observations):
-        last_latent = perception.update(
+        last_state = perception.update(
             observation=observation,
             reward=float(index % 2),
             last_action=(index % 2) if index else None,
         )
+        last_latent = last_state.tensor_view()
         latent_values = [float(v) for v in last_latent.detach().cpu().tolist()]
         for dim, value in enumerate(latent_values):
             latent_series[dim].append(value)
 
-    if last_latent is None:
+    if last_latent is None or last_state is None:
         raise AssertionError("No observations were collected")
 
     utility_scores = (
-        UtilityRecord(ComponentKind.FEATURE, "pole_angle", 4.0),
-        UtilityRecord(ComponentKind.FEATURE, "pole_angular_velocity", 3.0),
-        UtilityRecord(ComponentKind.FEATURE, "cart_position", 2.0),
-        UtilityRecord(ComponentKind.FEATURE, "cart_velocity", 1.0),
+        UtilityRecord(ComponentKind.FEATURE, "pole_balance", 4.0),
+        UtilityRecord(ComponentKind.FEATURE, "cart_motion", 2.0),
     )
     ranked = list(
         perception.discover_and_rank_features(
@@ -361,6 +489,7 @@ def test_perception_module() -> None:
         {
             "sample_count": len(observations),
             "latent_shape": list(last_latent.shape),
+            "named_fields": sorted(last_state.named_fields),
             "ranked_features": ranked,
             "created_subtasks": [subtask.subtask_id for subtask in first_subtasks],
             "repeated_subtasks": [subtask.subtask_id for subtask in second_subtasks],
@@ -380,15 +509,106 @@ def test_perception_module() -> None:
     )
 
     assert tuple(last_latent.shape) == (4,)
-    assert torch.allclose(perception.current_subjective_state(), last_latent)
-    assert ranked == ["pole_angle", "pole_angular_velocity"]
+    assert torch.allclose(perception.current_subjective_state().tensor_view(), last_latent)
+    assert ranked == ["pole_balance", "cart_motion"]
     assert [subtask.subtask_id for subtask in first_subtasks] == [
-        "subtask:pole_angle",
-        "subtask:pole_angular_velocity",
+        "subtask:pole_balance",
+        "subtask:cart_motion",
     ]
     assert second_subtasks == []
 
     print(f"PASS: perception diagnostics saved to {module_dir}")
+
+
+def test_trainable_encoders_learn_reconstruction() -> None:
+    """train_encoder=True should update MLP/CNN encoder weights and lower loss."""
+    _set_seed(DEFAULT_SEED)
+    device = _device()
+    base_observations = _collect_cartpole_observations(
+        DEFAULT_SEED, DEFAULT_ENCODER_TRAIN_SAMPLES
+    )
+
+    mlp_config = dict(CARTPOLE_WORLD_DESCRIPTION.to_config())
+    mlp_config["encoder_type"] = "mlp"
+    mlp_config["latent_dim"] = 16
+    mlp_agent = _build_trainable_agent(mlp_config, train_encoder=True, device=device)
+    mlp_perception, _, _, _ = _unwrap_modules(mlp_agent)
+    mlp_encoder = _trainable_encoder_for(mlp_perception)
+    mlp_before = _encoder_parameter_snapshot(mlp_encoder)
+    mlp_latent, mlp_loss_history = _train_encoder_via_perception(
+        mlp_perception,
+        base_observations,
+        epochs=DEFAULT_ENCODER_TRAIN_EPOCHS,
+    )
+    mlp_delta = _encoder_parameter_delta(mlp_before, mlp_encoder)
+
+    cnn_config: dict[str, object] = {
+        "obs_shape": (DEFAULT_ENCODER_IMAGE_SIZE, DEFAULT_ENCODER_IMAGE_SIZE, 3),
+        "action_n": 2,
+        "encoder_type": "cnn",
+        "latent_dim": 32,
+        "features": [],
+    }
+    cnn_agent = _build_trainable_agent(cnn_config, train_encoder=True, device=device)
+    cnn_perception, _, _, _ = _unwrap_modules(cnn_agent)
+    cnn_encoder = _trainable_encoder_for(cnn_perception)
+    image_observations = [
+        _cartpole_observation_to_image(observation) for observation in base_observations
+    ]
+    cnn_encoder.encode(image_observations[0])
+    cnn_before = _encoder_parameter_snapshot(cnn_encoder)
+    cnn_latent, cnn_loss_history = _train_encoder_via_perception(
+        cnn_perception,
+        image_observations,
+        epochs=DEFAULT_ENCODER_TRAIN_EPOCHS,
+    )
+    cnn_delta = _encoder_parameter_delta(cnn_before, cnn_encoder)
+
+    module_dir = _module_dir("encoder_training")
+    _write_json(
+        module_dir / "summary.json",
+        {
+            "epochs": DEFAULT_ENCODER_TRAIN_EPOCHS,
+            "sample_count": len(base_observations),
+            "mlp": {
+                "latent_shape": list(mlp_latent.shape),
+                "initial_loss": mlp_loss_history[0],
+                "final_loss": mlp_loss_history[-1],
+                "parameter_delta": mlp_delta,
+            },
+            "cnn": {
+                "latent_shape": list(cnn_latent.shape),
+                "initial_loss": cnn_loss_history[0],
+                "final_loss": cnn_loss_history[-1],
+                "parameter_delta": cnn_delta,
+            },
+        },
+    )
+    _write_line_plot_svg(
+        module_dir / "mlp_loss.svg",
+        title="MLP Encoder Reconstruction Loss",
+        x_label="Epoch",
+        y_label="Mean MSE",
+        series=[("mlp_loss", mlp_loss_history, PLOT_COLORS[0])],
+    )
+    _write_line_plot_svg(
+        module_dir / "cnn_loss.svg",
+        title="CNN Encoder Reconstruction Loss",
+        x_label="Epoch",
+        y_label="Mean MSE",
+        series=[("cnn_loss", cnn_loss_history, PLOT_COLORS[1])],
+    )
+
+    assert mlp_perception._train_encoder is True
+    assert cnn_perception._train_encoder is True
+    assert tuple(mlp_latent.shape) == (16,)
+    assert tuple(cnn_latent.shape) == (32,)
+    assert mlp_delta > 0.0
+    assert cnn_delta > 0.0
+    assert mlp_loss_history[-1] < mlp_loss_history[0]
+    assert cnn_loss_history[-1] < cnn_loss_history[0]
+
+    print(f"PASS: encoder-training diagnostics saved to {module_dir}")
 
 
 def test_value_function_module() -> None:
@@ -406,7 +626,7 @@ def test_value_function_module() -> None:
     gvf_history: list[float] = []
     advantage_history: list[float] = []
 
-    initial_predictions = value_function.predict(REFERENCE_STATE)
+    initial_predictions = value_function.predict(_subjective_state(REFERENCE_STATE))
     initial_q = float(initial_predictions[f"q_{option_id}"])
     initial_gvf = float(initial_predictions[f"gvf_{gvf_id}"])
 
@@ -416,15 +636,15 @@ def test_value_function_module() -> None:
         value_function.set_last_option_idx(option_idx)
         td_errors = value_function.update(
             Transition(
-                subjective_state=state,
+                subjective_state=_subjective_state(state),
                 action=1,
                 reward=1.0,
-                next_subjective_state=next_state,
+                next_subjective_state=_subjective_state(next_state),
                 terminated=((step + 1) % 40 == 0),
             )
         )
 
-        predictions = value_function.predict(REFERENCE_STATE)
+        predictions = value_function.predict(_subjective_state(REFERENCE_STATE))
         q_history.append(float(predictions[f"q_{option_id}"]))
         gvf_history.append(float(predictions[f"gvf_{gvf_id}"]))
         advantage_history.append(float(td_errors["advantage"]))
@@ -498,14 +718,14 @@ def test_reactive_policy_module() -> None:
     initial_q_values, initial_stop_prob = _policy_snapshot(
         reactive_policy,
         option_id,
-        REFERENCE_STATE,
+        _subjective_state(REFERENCE_STATE),
     )
 
     for step in range(DEFAULT_POLICY_UPDATES):
         state = _state_variant(step)
         next_state = _state_variant(step + 1)
         _, active_option_id = reactive_policy.select_action(
-            state,
+            _subjective_state(state),
             option_stop_threshold=0.5,
         )
         assert active_option_id == option_id
@@ -514,10 +734,10 @@ def test_reactive_policy_module() -> None:
         reward = 1.0 if action == 1 else 0.0
         reactive_policy.update(
             Transition(
-                subjective_state=state,
+                subjective_state=_subjective_state(state),
                 action=action,
                 reward=reward,
-                next_subjective_state=next_state,
+                next_subjective_state=_subjective_state(next_state),
                 terminated=False,
             ),
             {"advantage": reward},
@@ -526,7 +746,7 @@ def test_reactive_policy_module() -> None:
         q_values, stop_prob = _policy_snapshot(
             reactive_policy,
             option_id,
-            REFERENCE_STATE,
+            _subjective_state(REFERENCE_STATE),
         )
         action0_history.append(q_values[0])
         action1_history.append(q_values[1])
@@ -589,10 +809,10 @@ def test_transition_model_module() -> None:
         next_state = state + ACTION_DELTAS[action]
         transition_model.update(
             Transition(
-                subjective_state=state,
+                subjective_state=_subjective_state(state),
                 action=action,
                 reward=ACTION_REWARDS[action],
-                next_subjective_state=next_state,
+                next_subjective_state=_subjective_state(next_state),
                 terminated=False,
                 option_id=option_id,
             )
@@ -616,9 +836,9 @@ def test_transition_model_module() -> None:
             float((reward_pred.squeeze() - ACTION_REWARDS[action]) ** 2)
         )
 
-    q_before = float(value_function.predict(REFERENCE_STATE)[f"q_{option_id}"])
-    planning = transition_model.plan(REFERENCE_STATE, value_function, budget=5)
-    q_after = float(value_function.predict(REFERENCE_STATE)[f"q_{option_id}"])
+    q_before = float(value_function.predict(_subjective_state(REFERENCE_STATE))[f"q_{option_id}"])
+    planning = transition_model.plan(_subjective_state(REFERENCE_STATE), value_function, budget=5)
+    q_after = float(value_function.predict(_subjective_state(REFERENCE_STATE))[f"q_{option_id}"])
 
     module_dir = _module_dir("transition_model")
     _write_json(
@@ -668,10 +888,10 @@ def test_planner_value_handoff_respects_option_identity() -> None:
     for _ in range(warmup_updates):
         transition_model.update(
             Transition(
-                subjective_state=REFERENCE_STATE,
+                subjective_state=_subjective_state(REFERENCE_STATE),
                 action=1,
                 reward=ACTION_REWARDS[1],
-                next_subjective_state=REFERENCE_STATE + ACTION_DELTAS[1],
+                next_subjective_state=_subjective_state(REFERENCE_STATE + ACTION_DELTAS[1]),
                 terminated=False,
                 option_id=source_option_id,
             )
@@ -683,7 +903,7 @@ def test_planner_value_handoff_respects_option_identity() -> None:
 
     # Simulate a stale "last selected option" that does not match the sampled model data.
     value_function.set_last_option_idx(stale_option_idx)
-    planning = transition_model.plan(REFERENCE_STATE, value_function, budget=1)
+    planning = transition_model.plan(_subjective_state(REFERENCE_STATE), value_function, budget=1)
 
     after_weight = output_head.weight.detach().clone()
     after_bias = output_head.bias.detach().clone()
@@ -721,6 +941,7 @@ def main() -> None:
     tests = [
         test_build_agent_components,
         test_perception_module,
+        test_trainable_encoders_learn_reconstruction,
         test_value_function_module,
         test_reactive_policy_module,
         test_transition_model_module,

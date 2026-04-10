@@ -13,8 +13,15 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable
 
+import numpy as np
+
 from examples.example_01 import runner as example_01_runner
-from examples.example_01 import DescribedGymWorld, GymWorld, build_agent, run_training
+from examples.example_01 import (
+    DescribedGymWorld,
+    GymWorld,
+    build_agent,
+    run_training,
+)
 from examples.smoke.minimal_oak import MinimalWorld
 from examples.smoke.minimal_oak import run_minimal_episode as run_minimal_smoke
 from examples.smoke.minimal_oak_fine_grained import run_minimal_episode as run_minimal_fine_grained
@@ -48,6 +55,17 @@ def test_build_agent() -> None:
     agent = build_agent(config)
     assert isinstance(agent, OaKAgent)
     print("PASS: build_agent() returns OaKAgent")
+
+
+def test_grouped_feature_hints() -> None:
+    """CartPole described mode should expose grouped semantic features."""
+    world = DescribedGymWorld("CartPole-v1")
+    agent = build_agent(world.description.to_config())
+    world.close()
+
+    feature_ids = [feature.feature_id for feature in agent.perception.list_features()]
+    assert feature_ids == ["cart_motion", "pole_balance"]
+    print("PASS: grouped feature hints preserved")
 
 
 def test_agent_train_embedded() -> None:
@@ -100,6 +118,17 @@ def test_run_training_discovery() -> None:
     print(f"PASS: run_training(discovery) ran {len(rewards)} episodes")
 
 
+def test_raw_world_preserves_gym_observation() -> None:
+    """Discovery worlds should expose the raw Gym observation unchanged."""
+    world = GymWorld("CartPole-v1")
+    ts = world.reset()
+    world.close()
+
+    assert isinstance(ts.observation, np.ndarray)
+    assert tuple(ts.observation.shape) == (4,)
+    print("PASS: raw discovery world preserves Gym observation")
+
+
 def test_smoke_minimal() -> None:
     """Minimal smoke test still passes."""
     trace = run_minimal_smoke(horizon=5)
@@ -126,9 +155,11 @@ def main() -> None:
     tests = [
         test_world_protocol,
         test_build_agent,
+        test_grouped_feature_hints,
         test_agent_train_embedded,
         test_run_training_embedded,
         test_run_training_discovery,
+        test_raw_world_preserves_gym_observation,
         test_smoke_minimal,
         test_smoke_fine_grained,
         test_example_imports,

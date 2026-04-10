@@ -5,36 +5,22 @@ import os
 
 import numpy as np
 
+from examples.example_01 import CARTPOLE_WORLD_DESCRIPTION
 from examples.example_01.llm import _DEFAULT_MODEL, _get_ollama_url, analyze_world
+from examples.example_01.schema import PerceptionPlan
 
 _RUN_FLAG = "OAK_RUN_LLM_CONNECTION_TEST"
 _MODEL_ENV = "OAK_LLM_MODEL"
 _TIMEOUT_ENV = "OAK_LLM_TIMEOUT_SECONDS"
 
 
-def _validate_response(result: dict[str, object]) -> None:
-    expected_keys = {
-        "observation_type",
-        "dimensions",
-        "encoder_type",
-        "features",
-        "notes",
-    }
-    missing = sorted(expected_keys.difference(result))
-    if missing:
-        raise RuntimeError(f"LLM response missing expected keys: {missing}")
-
-    encoder_type = result["encoder_type"]
-    if not isinstance(encoder_type, str) or not encoder_type.strip():
-        raise TypeError("LLM response field 'encoder_type' must be a non-empty string")
-
-    features = result["features"]
-    if not isinstance(features, list):
-        raise TypeError("LLM response field 'features' must be a list")
-
-    notes = result["notes"]
-    if not isinstance(notes, str):
-        raise TypeError("LLM response field 'notes' must be a string")
+def _validate_response(result: PerceptionPlan) -> None:
+    if not result.tensor_views:
+        raise RuntimeError("LLM startup plan must include at least one tensor view")
+    if not result.feature_groups:
+        raise RuntimeError("LLM startup plan must include at least one feature group")
+    if result.default_tensor_view not in {view.view_id for view in result.tensor_views}:
+        raise RuntimeError("LLM startup plan returned an unknown default tensor view")
 
 
 def main() -> None:
@@ -54,17 +40,13 @@ def main() -> None:
         np.array([0.05, -0.01, 0.03, 0.02], dtype=np.float32),
         np.array([-0.01, 0.02, -0.04, 0.01], dtype=np.float32),
     ]
-    action_discovery = {
-        "action_type": "discrete",
-        "action_n": 2,
-    }
 
     print(f"Testing LLM connection against {target_url}")
     print(f"Using model: {model}")
 
     result = analyze_world(
+        CARTPOLE_WORLD_DESCRIPTION,
         observation_samples,
-        action_discovery,
         model=model,
         timeout=timeout,
     )
@@ -76,9 +58,11 @@ def main() -> None:
         )
 
     _validate_response(result)
+    if not result.llm_used:
+        raise RuntimeError("LLM connection test expected a live LLM-backed plan")
 
     print("LLM connection test passed.")
-    print(json.dumps(result, indent=2, sort_keys=True))
+    print(json.dumps(result.to_config(), indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":

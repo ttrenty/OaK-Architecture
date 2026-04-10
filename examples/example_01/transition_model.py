@@ -22,6 +22,12 @@ from oak.types import (
     Transition,
 )
 
+from .schema import (
+    ExampleSubjectiveState,
+    StateTensorAdapter,
+    subjective_state_from_tensor,
+)
+
 
 class _WorldModelNetwork(nn.Module):
     """Predicts (next_state - state, reward) from (state, one_hot_action)."""
@@ -52,7 +58,7 @@ class _WorldModelNetwork(nn.Module):
         return delta, reward
 
 
-class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
+class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str, Any]]):
     """Dyna-Q: learn a world model, plan with imagined transitions.
 
     Parameters
@@ -73,12 +79,14 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
         model_train_batch: int = 32,
         planning_warmup_steps: int = 500,
         device: torch.device | None = None,
+        state_adapter: StateTensorAdapter | None = None,
     ) -> None:
         self._state_dim = state_dim
         self._num_actions = num_actions
         self._model_train_batch = model_train_batch
         self._planning_warmup_steps = max(model_train_batch, planning_warmup_steps)
         self._device = device or torch.device("cpu")
+        self._state_adapter = state_adapter or StateTensorAdapter()
 
         self._model = _WorldModelNetwork(state_dim, num_actions).to(self._device)
         self._optimizer = torch.optim.Adam(self._model.parameters(), lr=lr)
@@ -96,10 +104,10 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
 
     def update(
         self,
-        transition: Transition[Any, torch.Tensor, dict[str, Any]],
+        transition: Transition[Any, ExampleSubjectiveState, dict[str, Any]],
     ) -> None:
-        state = transition.subjective_state.detach()
-        next_state = transition.next_subjective_state.detach()
+        state = self._state_adapter.tensor(transition.subjective_state).detach()
+        next_state = self._state_adapter.tensor(transition.next_subjective_state).detach()
         action = int(transition.action)
         reward = transition.reward
         done = transition.terminated
@@ -117,8 +125,8 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
 
     def plan(
         self,
-        subjective_state: torch.Tensor,
-        value_function: ValueFunction[torch.Tensor, Any, dict[str, Any]],
+        subjective_state: ExampleSubjectiveState,
+        value_function: ValueFunction[ExampleSubjectiveState, Any, dict[str, Any]],
         budget: int,
     ) -> PlanningUpdate[Any]:
         """Dyna-Q planning: generate imagined transitions and update values."""
@@ -148,11 +156,19 @@ class DynaTransitionModel(TransitionModel[torch.Tensor, Any, dict[str, Any]]):
                 next_state_pred = s + delta.squeeze(0)
 
             # Create synthetic transition and feed to value function
-            synthetic: Transition[Any, torch.Tensor, dict[str, Any]] = Transition(
-                subjective_state=state,
+            synthetic: Transition[Any, ExampleSubjectiveState, dict[str, Any]] = Transition(
+                subjective_state=subjective_state_from_tensor(
+                    state,
+                    view_name=self._state_adapter.view_name or subjective_state.default_tensor_view,
+                    metadata={"synthetic": True},
+                ),
                 action=action,
                 reward=reward_pred.item(),
-                next_subjective_state=next_state_pred,
+                next_subjective_state=subjective_state_from_tensor(
+                    next_state_pred,
+                    view_name=self._state_adapter.view_name or subjective_state.default_tensor_view,
+                    metadata={"synthetic": True},
+                ),
                 terminated=False,  # imagined transitions are not terminal
                 option_id=option_id,
             )

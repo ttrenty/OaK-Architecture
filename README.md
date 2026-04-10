@@ -72,6 +72,16 @@ lifecycle: discovery, LLM-augmented perception, Option-Critic temporal
 abstraction, Dyna-Q model-based planning, GVF auxiliary predictions, and
 utility-based curation.
 
+The key workflow is now:
+
+1. the world emits raw observations
+2. discovery or an embedded `WorldDescription` produces a typed channel schema
+3. a startup-time planner (LLM with heuristic fallback) creates a `PerceptionPlan`
+4. perception turns each raw observation into an `AgentObservation` and then a
+   structured subjective state with named semantic fields plus tensor views
+5. the lower RL modules learn from the selected tensor view without owning the
+   observation semantics themselves
+
 The agent modules are environment-agnostic. To apply the same agent to a
 different RL problem, implement a new `World` and pass it to `run_training()`.
 
@@ -81,8 +91,8 @@ The config mode is chosen automatically based on the world you pass in:
 
 | World class | Config source | Discovery? | LLM? |
 |---|---|---|---|
-| `GymWorld("CartPole-v1")` (no `description`) | Trial-and-error probing | Yes | Optional |
-| `DescribedGymWorld("CartPole-v1")` (has `description`) | `WorldDescription` attribute | No | No |
+| `GymWorld("CartPole-v1")` (no `description`) | Trial-and-error probing of raw observations | Yes | Startup-only, optional |
+| `DescribedGymWorld("CartPole-v1")` (has `description`) | Structured `WorldDescription` attribute | No | Startup-only, optional |
 
 ```python
 from examples.example_01 import DescribedGymWorld, GymWorld, run_training
@@ -99,20 +109,21 @@ run_training(
 ```
 
 **Discovery mode** (world without `description`): the agent probes the
-world with trial-and-error actions to discover observation type/shape and the
-action space, then optionally consults an LLM for feature analysis.
+world with trial-and-error actions, infers a channel-based observation schema
+from raw samples, and then builds a startup-time perception plan.
 
-**Described mode** (world with `description`): observation shape, action count,
-encoder type, and feature descriptions are read directly from the world's
-`WorldDescription`.  This skips discovery and LLM calls entirely, making
-startup instant and training deterministic from step one.
+**Described mode** (world with `description`): the world provides that
+channel schema directly through `WorldDescription`, so discovery is skipped.
+The same startup-time perception planner still runs, but it starts from the
+embedded schema instead of probing the world.
 
 ### How it works
 
-1. **Config**: obtain observation/action space info from the world (either
-   auto-discovered or read from its `description` attribute).
+1. **Startup spec**: obtain a structured `WorldDescription` from discovery or
+   from the world itself, then build a `PerceptionPlan`.
 2. **Build**: the agent is assembled from four modules:
-   - `AdaptivePerception`: encodes observations, manages features/subtasks
+   - `AdaptivePerception`: normalizes raw observations into `AgentObservation`,
+     builds a structured subjective state, and manages grouped features/subtasks
    - `OptionValueFunction`: DQN-style Q_Omega over option slots + GVF heads
    - `DynaTransitionModel`: learned world model with imagined rollouts
    - `OptionCriticPolicy`: per-option DQN Q-networks + learned termination
@@ -258,19 +269,21 @@ The main knobs to tune, organized by module:
 examples/example_01/
   __init__.py            # public API exports
   runner.py              # build_agent() + run_training() orchestration
+  schema.py              # shared world/perception/state dataclasses
+  startup.py             # discovery normalization + heuristic startup planning
 
   # ── Agent modules (environment-agnostic, reusable with any World) ──
   encoders.py            # Identity, MLP, CNN encoder architectures
-  perception.py          # Adaptive perception (pluggable encoder)
+  perception.py          # Adaptive perception over structured subjective state
   value_function.py      # Q_Omega + GVFs + utility/curation
   transition_model.py    # Dyna-Q world model + planning
   reactive_policy.py     # Option-Critic (per-option DQN + termination)
   discovery.py           # Trial-and-error observation/action space discovery
-  llm.py                 # Ollama REST API for feature analysis
+  llm.py                 # Ollama REST API for startup perception planning
 
   # ── Gym World wrappers ──
-  world.py               # Opaque gym wrapper (triggers discovery mode)
-  world_embedded.py      # Described gym wrapper + bundled CartPole metadata
+  world.py               # Raw gym wrapper (triggers discovery mode)
+  world_embedded.py      # Described gym wrapper + bundled structured metadata
 
 tests/
   debug_example_01_cartpole.py         # Targeted Example 01 component tests
