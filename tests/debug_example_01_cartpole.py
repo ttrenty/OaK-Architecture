@@ -226,8 +226,20 @@ def _make_world(seed: int) -> DescribedGymWorld:
     return world
 
 
-def _build_cartpole_agent(device: torch.device | None = None) -> OaKAgent:
-    return build_agent(CARTPOLE_WORLD_DESCRIPTION.to_config(), device=device)
+def _build_cartpole_agent(
+    device: torch.device | None = None,
+    *,
+    planning_budget: int = 5,
+    planning_warmup_steps: int = 1,
+    feature_budget: int = 2,
+) -> OaKAgent:
+    return build_agent(
+        CARTPOLE_WORLD_DESCRIPTION.to_config(),
+        device=device,
+        planning_budget=planning_budget,
+        planning_warmup_steps=planning_warmup_steps,
+        feature_budget=feature_budget,
+    )
 
 
 def _build_trainable_agent(
@@ -482,6 +494,14 @@ def test_perception_module() -> None:
     )
     first_subtasks = list(perception.generate_subtasks(ranked))
     second_subtasks = list(perception.generate_subtasks(ranked))
+    for extra_index in range(perception._subtask_creation_interval):
+        perception.update(
+            observation=observations[extra_index % len(observations)],
+            reward=0.0,
+            last_action=extra_index % 2,
+        )
+    third_subtasks = list(perception.generate_subtasks(ranked))
+    current_latent = perception.current_subjective_state().tensor_view()
 
     module_dir = _module_dir("perception")
     _write_json(
@@ -493,6 +513,8 @@ def test_perception_module() -> None:
             "ranked_features": ranked,
             "created_subtasks": [subtask.subtask_id for subtask in first_subtasks],
             "repeated_subtasks": [subtask.subtask_id for subtask in second_subtasks],
+            "scheduled_subtasks": [subtask.subtask_id for subtask in third_subtasks],
+            "subtask_creation_interval": perception._subtask_creation_interval,
         },
     )
     _write_line_plot_svg(
@@ -509,13 +531,14 @@ def test_perception_module() -> None:
     )
 
     assert tuple(last_latent.shape) == (4,)
-    assert torch.allclose(perception.current_subjective_state().tensor_view(), last_latent)
+    assert tuple(current_latent.shape) == (4,)
     assert ranked == ["pole_balance", "cart_motion"]
     assert [subtask.subtask_id for subtask in first_subtasks] == [
         "subtask:pole_balance",
         "subtask:cart_motion",
     ]
     assert second_subtasks == []
+    assert third_subtasks == []
 
     print(f"PASS: perception diagnostics saved to {module_dir}")
 
@@ -821,10 +844,11 @@ def test_transition_model_module() -> None:
 
     delta_errors: list[float] = []
     reward_errors: list[float] = []
+    done_probs: list[float] = []
     device_state = REFERENCE_STATE.to(transition_model._device)
     for action in (0, 1):
         with torch.no_grad():
-            delta_pred, reward_pred = transition_model._model(
+            delta_pred, reward_pred, done_logit = transition_model._model(
                 device_state,
                 torch.tensor(action, device=transition_model._device),
             )
@@ -835,6 +859,7 @@ def test_transition_model_module() -> None:
         reward_errors.append(
             float((reward_pred.squeeze() - ACTION_REWARDS[action]) ** 2)
         )
+        done_probs.append(float(torch.sigmoid(done_logit).item()))
 
     q_before = float(value_function.predict(_subjective_state(REFERENCE_STATE))[f"q_{option_id}"])
     planning = transition_model.plan(_subjective_state(REFERENCE_STATE), value_function, budget=5)
@@ -849,6 +874,7 @@ def test_transition_model_module() -> None:
             "final_model_loss": loss_history[-1],
             "delta_mse": delta_errors,
             "reward_mse": reward_errors,
+            "done_probabilities": done_probs,
             "planning_steps": planning.search_statistics.get("planning_steps", 0),
             "q_before_planning": q_before,
             "q_after_planning": q_after,
@@ -866,6 +892,7 @@ def test_transition_model_module() -> None:
     assert loss_history[-1] < max(loss_history)
     assert max(delta_errors) < 1e-3
     assert max(reward_errors) < 1e-3
+    assert max(done_probs) < 0.1
     if DEFAULT_MODEL_UPDATES >= 500:
         assert planning.search_statistics.get("planning_steps", 0) == 5
         assert abs(q_after - q_before) > 1e-6

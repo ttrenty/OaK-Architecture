@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -19,6 +20,28 @@ from .schema import (
     TensorViewPlan,
     WorldDescription,
 )
+
+
+_KNOWN_RAW_VALUE_SCALES: dict[str, dict[str, dict[str, float]]] = {
+    "CartPole-v1": {
+        "main": {
+            "cart_position": 2.4,
+            "cart_velocity": 3.0,
+            "pole_angle": 0.2095,
+            "pole_angular_velocity": 3.5,
+        }
+    },
+    "Acrobot-v1": {
+        "main": {
+            "cos_theta1": 1.0,
+            "sin_theta1": 1.0,
+            "cos_theta2": 1.0,
+            "sin_theta2": 1.0,
+            "angular_velocity_1": float(4.0 * np.pi),
+            "angular_velocity_2": float(9.0 * np.pi),
+        }
+    },
+}
 
 
 def infer_world_description(
@@ -145,15 +168,203 @@ def build_heuristic_perception_plan(
     tensor_views = tuple(_default_tensor_views(description))
     if not tensor_views:
         raise ValueError("Perception plan requires at least one tensor view")
-    return PerceptionPlan(
-        world_description=description,
-        feature_groups=feature_groups,
-        tensor_views=tensor_views,
-        default_tensor_view=tensor_views[0].view_id,
-        notes=notes or description.notes,
-        llm_used=llm_used,
-        metadata=dict(metadata or {}),
+    return stabilize_perception_plan(
+        PerceptionPlan(
+            world_description=description,
+            feature_groups=feature_groups,
+            tensor_views=tensor_views,
+            default_tensor_view=tensor_views[0].view_id,
+            notes=notes or description.notes,
+            llm_used=llm_used,
+            metadata=dict(metadata or {}),
+        )
     )
+
+
+def stabilize_perception_plan(plan: PerceptionPlan) -> PerceptionPlan:
+    """Normalize a startup plan into a safe control-state configuration.
+
+    For raw-value worlds, downstream control should always have access to a
+    full-state tensor view, even if an LLM proposes only partial slices such as
+    ``cart_motion_view``.
+    """
+    tensor_views = list(plan.tensor_views)
+    changed = False
+    for channel in plan.world_description.observation_channels:
+        if channel.kind != "raw_values":
+            continue
+        if _has_full_raw_tensor_view(channel, tensor_views):
+            continue
+        tensor_views.append(
+            _full_raw_tensor_view(
+                plan.world_description,
+                channel,
+                existing_view_ids={view.view_id for view in tensor_views},
+            )
+        )
+        changed = True
+
+    feature_groups = plan.feature_groups
+    if _is_small_raw_control_world(plan.world_description):
+        preferred_feature_groups = plan.world_description.feature_hints or tuple(
+            _generic_feature_hints(plan.world_description.observation_channels)
+        )
+        if preferred_feature_groups and preferred_feature_groups != feature_groups:
+            feature_groups = preferred_feature_groups
+            changed = True
+
+    default_tensor_view = _preferred_default_tensor_view(
+        plan.world_description,
+        tensor_views,
+        requested_default=plan.default_tensor_view,
+    )
+    if (
+        not changed
+        and default_tensor_view == plan.default_tensor_view
+        and feature_groups == plan.feature_groups
+    ):
+        return plan
+    return replace(
+        plan,
+        feature_groups=tuple(feature_groups),
+        tensor_views=tuple(tensor_views),
+        default_tensor_view=default_tensor_view,
+    )
+
+
+def _has_full_raw_tensor_view(
+    channel: ObservationChannelDescription,
+    tensor_views: Sequence[TensorViewPlan],
+) -> bool:
+    channel_names = channel.value_names or tuple(
+        f"value_{index}" for index in range(channel.input_dim() or 0)
+    )
+    channel_dim = len(channel_names) or (channel.input_dim() or 0)
+    for view in tensor_views:
+        if view.source_channel != channel.channel_id:
+            continue
+        if (
+            view.encoder_type == "identity"
+            and _resolved_raw_selector_names(view, channel_names) == channel_names
+        ):
+            return True
+        if (
+            view.encoder_type == "identity"
+            and not view.selector_names
+            and not view.selector_indices
+            and int(view.input_dim or 0) >= channel_dim
+        ):
+            return True
+    return False
+
+
+def _full_raw_tensor_view(
+    description: WorldDescription,
+    channel: ObservationChannelDescription,
+    *,
+    existing_view_ids: set[str],
+) -> TensorViewPlan:
+    input_dim = channel.input_dim() or 1
+    encoder_type = channel.encoder_hint or ("identity" if input_dim <= 32 else "mlp")
+    latent_dim = input_dim if encoder_type == "identity" else max(input_dim * 4, 32)
+    preferred_view_id = (
+        "full_state_view"
+        if description.primary_channel.channel_id == channel.channel_id
+        else f"{channel.channel_id}_full_state_view"
+    )
+    view_id = preferred_view_id
+    suffix = 1
+    while view_id in existing_view_ids:
+        view_id = f"{preferred_view_id}_{suffix}"
+        suffix += 1
+    return TensorViewPlan(
+        view_id=view_id,
+        source_channel=channel.channel_id,
+        encoder_type=encoder_type,
+        input_shape=channel.shape,
+        input_dim=input_dim,
+        input_channels=1,
+        latent_dim=latent_dim,
+        description=channel.description or f"Full raw-value state for {channel.channel_id!r}.",
+        selector_names=channel.value_names,
+    )
+
+
+def _preferred_default_tensor_view(
+    description: WorldDescription,
+    tensor_views: Sequence[TensorViewPlan],
+    *,
+    requested_default: str,
+) -> str:
+    if not tensor_views:
+        raise ValueError("Perception plan requires at least one tensor view")
+
+    views_by_id = {view.view_id: view for view in tensor_views}
+    primary_channel = description.primary_channel
+    if primary_channel.kind == "raw_values":
+        primary_views = [
+            view for view in tensor_views if view.source_channel == primary_channel.channel_id
+        ]
+        if primary_views:
+            return _richest_raw_tensor_view(primary_channel, primary_views).view_id
+
+    # For image channels, prefer a CNN (or MLP) view over an identity view.
+    # An identity encoder on raw pixels produces an unusably large flat state.
+    if primary_channel.kind == "image":
+        cnn_views = [
+            view for view in tensor_views
+            if view.source_channel == primary_channel.channel_id
+            and view.encoder_type in ("cnn", "mlp")
+        ]
+        if cnn_views:
+            return cnn_views[0].view_id
+
+    if requested_default in views_by_id:
+        return requested_default
+    return tensor_views[0].view_id
+
+
+def _richest_raw_tensor_view(
+    channel: ObservationChannelDescription,
+    tensor_views: Sequence[TensorViewPlan],
+) -> TensorViewPlan:
+    channel_names = channel.value_names or tuple(
+        f"value_{index}" for index in range(channel.input_dim() or 0)
+    )
+    return max(
+        tensor_views,
+        key=lambda view: (
+            int(_resolved_raw_selector_names(view, channel_names) == channel_names),
+            int(view.encoder_type == "identity"),
+            int(view.input_dim or 0),
+            int(not view.selector_names and not view.selector_indices),
+            len(view.selector_names),
+            len(view.selector_indices),
+        ),
+    )
+
+
+def _resolved_raw_selector_names(
+    view: TensorViewPlan,
+    channel_names: tuple[str, ...],
+) -> tuple[str, ...]:
+    if view.selector_names:
+        return tuple(name for name in view.selector_names if name in channel_names)
+    if view.selector_indices:
+        return tuple(
+            channel_names[index]
+            for index in view.selector_indices
+            if 0 <= index < len(channel_names)
+        )
+    return channel_names
+
+
+def _is_small_raw_control_world(description: WorldDescription) -> bool:
+    channels = description.observation_channels
+    if not channels or any(channel.kind != "raw_values" for channel in channels):
+        return False
+    total_dim = sum(channel.input_dim() or 0 for channel in channels)
+    return total_dim <= 32
 
 
 def build_agent_spec(
@@ -255,9 +466,27 @@ def tensor_input_from_observation(
     if channel.kind == "raw_values":
         values = observation.raw_values[view_plan.source_channel]
         ordered_names = channel.value_names or tuple(values.keys())
-        return np.asarray(
+        if view_plan.selector_names:
+            ordered_names = tuple(
+                name for name in view_plan.selector_names if name in values
+            )
+        elif view_plan.selector_indices:
+            ordered_names = tuple(
+                name
+                for index, name in enumerate(ordered_names)
+                if index in view_plan.selector_indices
+            )
+        if not ordered_names:
+            ordered_names = channel.value_names or tuple(values.keys())
+        raw_array = np.asarray(
             [_scalar_to_float(values[name]) for name in ordered_names],
             dtype=np.float32,
+        )
+        return _normalize_raw_value_array(
+            raw_array,
+            description,
+            channel,
+            ordered_names,
         )
 
     if channel.kind == "image":
@@ -531,6 +760,47 @@ def _scalar_to_float(value: ScalarValue) -> float:
         return float(value)
     except ValueError:
         return float(len(value))
+
+
+def _normalize_raw_value_array(
+    values: np.ndarray,
+    description: WorldDescription,
+    channel: ObservationChannelDescription,
+    ordered_names: Sequence[str],
+) -> np.ndarray:
+    scale_map = _raw_value_scale_map(description, channel)
+    if not scale_map:
+        return values
+    scales = np.asarray(
+        [
+            abs(float(scale_map.get(name, 1.0)))
+            for name in ordered_names
+        ],
+        dtype=np.float32,
+    )
+    scales = np.where(scales > 1e-6, scales, 1.0).astype(np.float32)
+    normalized = values / scales
+    return np.clip(normalized, -5.0, 5.0).astype(np.float32)
+
+
+def _raw_value_scale_map(
+    description: WorldDescription,
+    channel: ObservationChannelDescription,
+) -> dict[str, float]:
+    channel_scale_raw = channel.metadata.get("normalization_scales")
+    if isinstance(channel_scale_raw, Mapping):
+        return {
+            str(name): float(scale)
+            for name, scale in channel_scale_raw.items()
+            if isinstance(scale, (int, float))
+        }
+
+    env_id = str(description.metadata.get("env_id", "")).strip()
+    if not env_id:
+        return {}
+    return dict(
+        _KNOWN_RAW_VALUE_SCALES.get(env_id, {}).get(channel.channel_id, {})
+    )
 
 
 def _is_numeric_scalar(value: Any) -> bool:

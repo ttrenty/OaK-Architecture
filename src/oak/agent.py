@@ -25,6 +25,7 @@ from typing import Callable, Generic, Self, Sequence
 from .interfaces import (
     Perception,
     ReactivePolicy,
+    RenderableWorld,
     TransitionModel,
     ValueFunction,
     World,
@@ -34,6 +35,8 @@ from .types import (
     AgentStepResult,
     ComponentKind,
     CurationDecision,
+    EpisodeStepRecord,
+    EpisodeTrace,
     FeatureId,
     InfoT,
     ObservationT,
@@ -211,6 +214,12 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
         average_window: int = 100,
         solved_threshold: float | None = None,
         episode_logger: Callable[[int, float, float, Self], None] | None = None,
+        episode_trace_logger: Callable[
+            [EpisodeTrace[ObservationT, ActionT, SubjectiveStateT, InfoT]], None
+        ]
+        | None = None,
+        trace_selector: Callable[[int, int], bool] | None = None,
+        capture_rendered_frames: bool = False,
     ) -> list[float]:
         """Run the standard OaK episode loop on the given world.
 
@@ -229,6 +238,17 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
             Optional callback `(episode, episode_reward, avg_reward, agent)`
             called after each episode. Use this to own all per-episode logging
             or other training-side effects at the call site.
+        episode_trace_logger:
+            Optional richer callback receiving an `EpisodeTrace` with the
+            training world, agent, selected step records, and optionally
+            rendered frames.
+        trace_selector:
+            Optional predicate `(episode, num_episodes) -> bool` used to decide
+            which episodes should produce an `EpisodeTrace`. If omitted and an
+            `episode_trace_logger` is provided, all episodes are traced.
+        capture_rendered_frames:
+            When `True`, collect frames from worlds that implement the optional
+            `render_frame()` capability for traced episodes.
 
         Returns
         -------
@@ -242,8 +262,22 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
 
         for episode in range(num_episodes):
             time_step = world.reset()
+            initial_time_step = time_step
             self.reset()
             episode_reward = 0.0
+            step_count = 0
+            capture_trace = episode_trace_logger is not None and (
+                trace_selector(episode, num_episodes) if trace_selector is not None else True
+            )
+            traced_steps: list[
+                EpisodeStepRecord[ObservationT, ActionT, SubjectiveStateT, InfoT]
+            ] = []
+            traced_frames: list[object] = []
+
+            if capture_trace and capture_rendered_frames:
+                frame = self._render_frame(world)
+                if frame is not None:
+                    traced_frames.append(frame)
 
             while True:
                 result = self.step(time_step)
@@ -251,8 +285,26 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
                 if time_step.terminated or time_step.truncated:
                     break
 
-                time_step = world.step(result.action)
-                episode_reward += time_step.reward
+                next_time_step = world.step(result.action)
+                episode_reward += next_time_step.reward
+                if capture_trace:
+                    traced_steps.append(
+                        EpisodeStepRecord(
+                            step_index=step_count,
+                            time_step=time_step,
+                            action=result.action,
+                            next_time_step=next_time_step,
+                            active_option_id=result.active_option_id,
+                            planning_update=result.planning_update,
+                            created_subtasks=result.created_subtasks,
+                        )
+                    )
+                    if capture_rendered_frames:
+                        frame = self._render_frame(world)
+                        if frame is not None:
+                            traced_frames.append(frame)
+                time_step = next_time_step
+                step_count += 1
 
             reward_history.append(episode_reward)
             recent_window = reward_history[-average_window:]
@@ -266,6 +318,37 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
 
             if episode_logger is not None:
                 episode_logger(episode, episode_reward, avg_reward, self)
+
+            if episode_trace_logger is not None and capture_trace:
+                episode_trace_logger(
+                    EpisodeTrace(
+                        episode=episode,
+                        episode_reward=episode_reward,
+                        avg_reward=avg_reward,
+                        step_count=step_count,
+                        solved=solved,
+                        initial_time_step=initial_time_step,
+                        final_time_step=time_step,
+                        steps=tuple(traced_steps),
+                        frames=tuple(traced_frames),
+                        world=world,
+                        agent=self,
+                        metadata={
+                            "num_episodes": num_episodes,
+                            "capture_rendered_frames": capture_rendered_frames,
+                        },
+                    )
+                )
+
+            for component in (
+                self.perception,
+                self.value_function,
+                self.transition_model,
+                self.reactive_policy,
+            ):
+                end_episode = getattr(component, "end_episode", None)
+                if callable(end_episode):
+                    end_episode()
 
             if solved:
                 break
@@ -300,3 +383,12 @@ class OaKAgent(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
             self.transition_model.remove_option_models(decision.drop_option_models)
         if decision.drop_general_value_functions:
             self.value_function.remove(decision.drop_general_value_functions)
+
+    def _render_frame(
+        self,
+        world: World[ObservationT, ActionT, InfoT],
+    ) -> object | None:
+        """Capture one world frame when optional rendering is available."""
+        if not isinstance(world, RenderableWorld):
+            return None
+        return world.render_frame()

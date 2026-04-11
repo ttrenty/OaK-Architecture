@@ -136,6 +136,10 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
         self._usage_counts: dict[tuple[str, str], float] = {}
         self._gvf_error_accum: dict[str, float] = {}
         self._gvf_error_count: dict[str, int] = {}
+        self._episode_q_omega_loss_sum = 0.0
+        self._episode_q_omega_loss_count = 0
+        self._episode_gvf_loss_sum = 0.0
+        self._episode_gvf_loss_count = 0
 
         # Track which option was active for the last transition
         self._last_option_idx: int = 0
@@ -220,14 +224,15 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
             s = state.to(self._device)
             ns = next_state.to(self._device)
             q_current = self._q_net(s)
-            q_next = self._q_net(ns)
             mask = torch.tensor(
                 self._option_mask, dtype=torch.bool, device=self._device
             )
-            q_next_masked = q_next.clone()
-            q_next_masked[~mask] = -float("inf")
             if mask.any():
-                q_next_max = q_next_masked[mask].max().item()
+                q_next_online = self._q_net(ns)
+                q_next_online[~mask] = -float("inf")
+                next_option_idx = int(q_next_online.argmax().item())
+                q_next_target = self._target_net(ns)
+                q_next_max = q_next_target[next_option_idx].item()
             else:
                 q_next_max = 0.0
             q_active = q_current[option_idx].item()
@@ -355,21 +360,25 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
         q_current = q_all[option_idx]
 
         with torch.no_grad():
-            q_next = self._target_net(ns)
+            q_next_online = self._q_net(ns)
             mask = torch.tensor(
                 self._option_mask, dtype=torch.bool, device=self._device
             )
-            q_next[~mask] = -float("inf")
-            q_next_max = (
-                q_next[mask].max()
-                if mask.any()
-                else torch.tensor(0.0, device=self._device)
-            )
+            if mask.any():
+                q_next_online[~mask] = -float("inf")
+                next_option_idx = int(q_next_online.argmax().item())
+                q_next_target = self._target_net(ns)
+                q_next_max = q_next_target[next_option_idx]
+            else:
+                q_next_max = torch.tensor(0.0, device=self._device)
             target = reward + self._gamma * q_next_max * (1.0 - float(done))
 
         loss = nn.functional.smooth_l1_loss(q_current, target)
+        self._episode_q_omega_loss_sum += float(loss.item())
+        self._episode_q_omega_loss_count += 1
         self._optimizer.zero_grad()
         loss.backward()
+        nn.utils.clip_grad_norm_(self._q_net.parameters(), 10.0)
         self._optimizer.step()
 
     def _learn_q_omega(self) -> dict[str, float]:
@@ -389,18 +398,22 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
 
         # Target: r + γ * max_o' Q_target(s', o') * (1 - done)
         with torch.no_grad():
-            q_next = self._target_net(next_states)
+            q_next_online = self._q_net(next_states)
             mask = torch.tensor(
                 self._option_mask, dtype=torch.bool, device=self._device
             )
-            q_next[:, ~mask] = -float("inf")
             if mask.any():
-                q_next_max = q_next.max(dim=1).values
+                q_next_online[:, ~mask] = -float("inf")
+                next_option_indices = q_next_online.argmax(dim=1, keepdim=True)
+                q_next_target = self._target_net(next_states)
+                q_next_max = q_next_target.gather(1, next_option_indices).squeeze(1)
             else:
                 q_next_max = torch.zeros(self._batch_size, device=self._device)
             targets = rewards + self._gamma * q_next_max * (1.0 - dones)
 
         loss = nn.functional.smooth_l1_loss(q_taken, targets)
+        self._episode_q_omega_loss_sum += float(loss.item())
+        self._episode_q_omega_loss_count += 1
         self._optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(self._q_net.parameters(), 10.0)
@@ -435,7 +448,7 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
         done = transition.terminated
 
         errors: dict[str, float] = {}
-        total_loss = torch.tensor(0.0)
+        total_loss = torch.tensor(0.0, device=self._device)
 
         for gvf_id, head in self._gvf_heads.items():
             pred = head(state).squeeze()
@@ -453,8 +466,28 @@ class OptionValueFunction(ValueFunction[ExampleSubjectiveState, Any, dict[str, A
             self._gvf_error_count[gvf_id] = self._gvf_error_count.get(gvf_id, 0) + 1
 
         if total_loss.requires_grad:
+            self._episode_gvf_loss_sum += float(total_loss.item())
+            self._episode_gvf_loss_count += 1
             self._gvf_optim.zero_grad()
             total_loss.backward()
             self._gvf_optim.step()
 
         return errors
+
+    def training_metrics(self) -> Mapping[str, float]:
+        metrics: dict[str, float] = {}
+        if self._episode_q_omega_loss_count > 0:
+            metrics["value_q_omega_loss"] = (
+                self._episode_q_omega_loss_sum / self._episode_q_omega_loss_count
+            )
+        if self._episode_gvf_loss_count > 0:
+            metrics["value_gvf_loss"] = (
+                self._episode_gvf_loss_sum / self._episode_gvf_loss_count
+            )
+        return metrics
+
+    def end_episode(self) -> None:
+        self._episode_q_omega_loss_sum = 0.0
+        self._episode_q_omega_loss_count = 0
+        self._episode_gvf_loss_sum = 0.0
+        self._episode_gvf_loss_count = 0

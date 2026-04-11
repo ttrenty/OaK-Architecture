@@ -33,11 +33,35 @@ cmd = "env PYTHONPATH=src OAK_RUN_LLM_CONNECTION_TEST=1 python -m tests.test_llm
 [tasks.test_debug_example_01_cartpole]
 cmd = "env PYTHONPATH=src python -m tests.debug_example_01_cartpole"
 
+[tasks.test_debug_example_01_cartpole_long]
+cmd = "env PYTHONPATH=src python -m tests.debug_example_01_cartpole_long_training"
+
 [tasks.test_example_01_cartpole]
 cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole"
 
 [tasks.test_example_01_cartpole_described]
 cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described"
+
+[tasks.test_example_01_acrobot]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole --env Acrobot-v1"
+
+[tasks.test_example_01_acrobot_described]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described --env Acrobot-v1"
+
+[tasks.test_example_01_cartpole_pixel]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole --env PixelCartPole-v1"
+
+# PixelCartPole-v1 = pixel-only observation (CNN only).
+[tasks.test_example_01_cartpole_pixel_described]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described --env PixelCartPole-v1"
+
+# MultiModalCartPole-v1 = pixels + raw state vector.
+[tasks.test_example_01_cartpole_multimodal]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described --env MultiModalCartPole-v1"
+
+# Clear aliases for the same pixels-plus-state described run.
+[tasks.test_example_01_cartpole_multimodal_described]
+cmd = "env PYTHONPATH=src python -m tests.run_example_01_cartpole_described --env MultiModalCartPole-v1"
 
 [tasks.test_benchmark_arc_agi]
 cmd = "env PYTHONPATH=src python -m tests.benchmark_arc_agi"
@@ -97,6 +121,7 @@ pip = ">=25.2,<26"
 build = ">=1.3.0,<2"
 pdoc = ">=15.0.4,<16"
 gymnasium = ">=1.2.3,<2"
+pygame = ">=2.6,<3"
 mypy = ">=1.15,<2"
 arc-agi = ">=0.9,<1"
 

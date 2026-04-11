@@ -83,6 +83,13 @@ class World(Protocol[WorldObservationT, WorldActionT, WorldInfoT]):
         ...
 
 
+@runtime_checkable
+class RenderableWorld(Protocol):
+    """Optional world capability for frame-based visualization."""
+
+    def render_frame(self) -> object | None: ...
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Continual-learning mixin (meta-learned step sizes)
 # ─────────────────────────────────────────────────────────────────────
