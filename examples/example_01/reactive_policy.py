@@ -99,8 +99,9 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
         state_dim: int,
         *,
         epsilon_start: float = 1.0,
-        epsilon_end: float = 0.01,
+        epsilon_end: float = 0.001,
         epsilon_decay_steps: int = 5_000,
+        epsilon_decay_episodes: int | None = None,
         lr: float = 1e-3,
         gamma: float = 0.99,
         buffer_capacity: int = 5_000,
@@ -119,6 +120,8 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
         self._epsilon_start = epsilon_start
         self._epsilon_end = epsilon_end
         self._epsilon_decay_steps = epsilon_decay_steps
+        self._epsilon_decay_episodes = epsilon_decay_episodes
+        self._episode_count = 0
 
         # Option storage: option_id → (networks, slot_index, subtask_id)
         self._options: dict[OptionId, tuple[_OptionNetworks, int, SubtaskId]] = {}
@@ -142,6 +145,10 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
         self._step_count = 0
         self._target_sync_freq = 200
         self._max_grad_norm = 10.0
+        self._episode_q_loss_sum = 0.0
+        self._episode_q_loss_count = 0
+        self._episode_termination_loss_sum = 0.0
+        self._episode_termination_loss_count = 0
 
     # ------------------------------------------------------------------
     # ReactivePolicy interface
@@ -279,11 +286,32 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
 
     @property
     def epsilon(self) -> float:
-        # Linear decay from start to end over decay_steps
+        # Prefer episode-based decay for control tasks whose episode lengths vary
+        # substantially (e.g. CartPole vs Acrobot). Step-based decay remains as a
+        # fallback for callers that explicitly configure it.
+        if self._epsilon_decay_episodes is not None:
+            decay_progress = min(
+                self._episode_count / max(self._epsilon_decay_episodes, 1),
+                1.0,
+            )
+        else:
+            decay_progress = min(
+                self._step_count / max(self._epsilon_decay_steps, 1),
+                1.0,
+            )
         return max(
             self._epsilon_end,
-            self._epsilon_start - self._step_count / self._epsilon_decay_steps,
+            self._epsilon_start
+            - (self._epsilon_start - self._epsilon_end) * decay_progress,
         )
+
+    def end_episode(self) -> None:
+        """Advance the exploration schedule once per completed episode."""
+        self._episode_count += 1
+        self._episode_q_loss_sum = 0.0
+        self._episode_q_loss_count = 0
+        self._episode_termination_loss_sum = 0.0
+        self._episode_termination_loss_count = 0
 
     # ------------------------------------------------------------------
     # Internal: action selection
@@ -324,9 +352,11 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
     def _learn_option_q(self) -> None:
         """DQN update for all option Q-networks from shared replay.
 
-        All options learn from the full batch (not grouped by which option
-        generated the transition).  This is valid because DQN is off-policy:
-        Q_o(s,a) converges to Q*(s,a) regardless of the behavior policy.
+        We intentionally train each option off-policy from the shared replay
+        buffer. This matches the spirit of intra-option learning more closely
+        than "only learn from your own transitions", and it is much more
+        data-efficient on small classic-control tasks where otherwise each
+        option sees too little experience to converge reliably.
         """
         batch = random.sample(list(self._buffer), self._batch_size)
 
@@ -351,13 +381,18 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
             q_all = nets.q_values(states)
             q_taken = q_all.gather(1, actions.unsqueeze(1)).squeeze(1)
 
-            # Target using target network for stability
+            # Double-DQN target using the online net for argmax and the target
+            # net for evaluation.
             with torch.no_grad():
-                q_next = nets.q_target_values(next_states)
-                q_next_max = q_next.max(dim=1).values
-                targets = rewards + self._gamma * q_next_max * (1.0 - dones)
+                q_next_online = nets.q_values(next_states)
+                next_actions = q_next_online.argmax(dim=1, keepdim=True)
+                q_next_target = nets.q_target_values(next_states)
+                q_next_selected = q_next_target.gather(1, next_actions).squeeze(1)
+                targets = rewards + self._gamma * q_next_selected * (1.0 - dones)
 
             loss = F.smooth_l1_loss(q_taken, targets)
+            self._episode_q_loss_sum += float(loss.item())
+            self._episode_q_loss_count += 1
             total_loss = total_loss + loss
 
         if total_loss.requires_grad and self._q_optimizer is not None:
@@ -390,10 +425,14 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
         v_next = max(q_vals) if q_vals else 0.0
 
         # If V(s') > Q(s', current_option), termination is beneficial
-        term_advantage = v_next - q_current
+        term_advantage = max(min(v_next - q_current, 5.0), -5.0)
 
         beta = nets.termination(next_state)
-        term_loss = beta.squeeze() * term_advantage * 0.01
+        # Gradient descent should increase beta when terminating is better
+        # and decrease beta when continuing is better.
+        term_loss = -beta.squeeze() * term_advantage * 0.01
+        self._episode_termination_loss_sum += float(term_loss.item())
+        self._episode_termination_loss_count += 1
 
         if term_loss.requires_grad:
             self._term_optimizer.zero_grad()
@@ -427,3 +466,16 @@ class OptionCriticPolicy(ReactivePolicy[ExampleSubjectiveState, Any, dict[str, A
         self._term_optimizer = (
             torch.optim.Adam(term_params, lr=self._lr) if term_params else None
         )
+
+    def training_metrics(self) -> Mapping[str, float]:
+        metrics: dict[str, float] = {}
+        if self._episode_q_loss_count > 0:
+            metrics["policy_q_loss"] = (
+                self._episode_q_loss_sum / self._episode_q_loss_count
+            )
+        if self._episode_termination_loss_count > 0:
+            metrics["policy_termination_loss"] = (
+                self._episode_termination_loss_sum
+                / self._episode_termination_loss_count
+            )
+        return metrics

@@ -30,7 +30,7 @@ from .schema import (
 
 
 class _WorldModelNetwork(nn.Module):
-    """Predicts (next_state - state, reward) from (state, one_hot_action)."""
+    """Predicts (next_state - state, reward, termination) from one step."""
 
     def __init__(self, state_dim: int, num_actions: int, hidden: int = 128) -> None:
         super().__init__()
@@ -43,10 +43,11 @@ class _WorldModelNetwork(nn.Module):
         )
         self.delta_head = nn.Linear(hidden, state_dim)
         self.reward_head = nn.Linear(hidden, 1)
+        self.done_head = nn.Linear(hidden, 1)
 
     def forward(
         self, state: torch.Tensor, action: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         one_hot = F.one_hot(action.long(), self.num_actions).float()
         if state.dim() == 1:
             state = state.unsqueeze(0)
@@ -55,7 +56,8 @@ class _WorldModelNetwork(nn.Module):
         h = self.trunk(x)
         delta = self.delta_head(h)
         reward = self.reward_head(h).squeeze(-1)
-        return delta, reward
+        done_logit = self.done_head(h).squeeze(-1)
+        return delta, reward, done_logit
 
 
 class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str, Any]]):
@@ -77,7 +79,8 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
         lr: float = 1e-3,
         buffer_capacity: int = 5_000,
         model_train_batch: int = 32,
-        planning_warmup_steps: int = 500,
+        planning_warmup_steps: int = 10_000,
+        planning_done_threshold: float = 0.5,
         device: torch.device | None = None,
         state_adapter: StateTensorAdapter | None = None,
     ) -> None:
@@ -85,6 +88,7 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
         self._num_actions = num_actions
         self._model_train_batch = model_train_batch
         self._planning_warmup_steps = max(model_train_batch, planning_warmup_steps)
+        self._planning_done_threshold = planning_done_threshold
         self._device = device or torch.device("cpu")
         self._state_adapter = state_adapter or StateTensorAdapter()
 
@@ -96,7 +100,12 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
             tuple[torch.Tensor, int, float, torch.Tensor, bool, OptionId | None]
         ] = deque(maxlen=buffer_capacity)
         self._model_loss: float = 0.0
+        self._done_loss: float = 0.0
         self._step_count = 0
+        self._episode_model_loss_sum = 0.0
+        self._episode_model_loss_count = 0
+        self._episode_done_loss_sum = 0.0
+        self._episode_done_loss_count = 0
 
     # ------------------------------------------------------------------
     # TransitionModel interface
@@ -134,13 +143,25 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
         # to produce useful predictions (avoids corrupting Q-values early)
         if self._step_count < self._planning_warmup_steps:
             return PlanningUpdate(
-                search_statistics={"planning_steps": 0, "model_loss": self._model_loss}
+                search_statistics={
+                    "planning_steps": 0,
+                    "model_loss": self._model_loss,
+                    "done_loss": self._done_loss,
+                }
             )
 
-        eligible_transitions = [entry for entry in self._buffer if entry[5] is not None]
+        eligible_transitions = [
+            entry
+            for entry in self._buffer
+            if entry[5] is not None and not entry[4]
+        ]
         if not eligible_transitions:
             return PlanningUpdate(
-                search_statistics={"planning_steps": 0, "model_loss": self._model_loss}
+                search_statistics={
+                    "planning_steps": 0,
+                    "model_loss": self._model_loss,
+                    "done_loss": self._done_loss,
+                }
             )
 
         planning_steps = 0
@@ -152,8 +173,10 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
             with torch.no_grad():
                 s = state.to(self._device)
                 action_t = torch.tensor(action, device=self._device)
-                delta, reward_pred = self._model(s, action_t)
+                delta, reward_pred, done_logit = self._model(s, action_t)
                 next_state_pred = s + delta.squeeze(0)
+                done_prob = torch.sigmoid(done_logit).item()
+                synthetic_done = done_prob >= self._planning_done_threshold
 
             # Create synthetic transition and feed to value function
             synthetic: Transition[Any, ExampleSubjectiveState, dict[str, Any]] = Transition(
@@ -169,7 +192,7 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
                     view_name=self._state_adapter.view_name or subjective_state.default_tensor_view,
                     metadata={"synthetic": True},
                 ),
-                terminated=False,  # imagined transitions are not terminal
+                terminated=synthetic_done,
                 option_id=option_id,
             )
             value_function.update(synthetic, planning=True)
@@ -179,6 +202,7 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
             search_statistics={
                 "planning_steps": planning_steps,
                 "model_loss": self._model_loss,
+                "done_loss": self._done_loss,
             }
         )
 
@@ -195,14 +219,44 @@ class DynaTransitionModel(TransitionModel[ExampleSubjectiveState, Any, dict[str,
         actions = torch.tensor([b[1] for b in batch], device=self._device)
         rewards = torch.tensor([b[2] for b in batch], dtype=torch.float32, device=self._device)
         next_states = torch.stack([b[3] for b in batch]).to(self._device)
+        dones = torch.tensor([b[4] for b in batch], dtype=torch.float32, device=self._device)
 
         delta_target = next_states - states
-        delta_pred, reward_pred = self._model(states, actions)
+        delta_pred, reward_pred, done_logit = self._model(states, actions)
+        done_loss = F.binary_cross_entropy_with_logits(done_logit, dones)
 
-        loss = F.mse_loss(delta_pred, delta_target) + F.mse_loss(reward_pred, rewards)
+        loss = (
+            F.mse_loss(delta_pred, delta_target)
+            + F.mse_loss(reward_pred, rewards)
+            + 0.25 * done_loss
+        )
 
         self._optimizer.zero_grad()
         loss.backward()
+        nn.utils.clip_grad_norm_(self._model.parameters(), 10.0)
         self._optimizer.step()
 
         self._model_loss = loss.item()
+        self._done_loss = done_loss.item()
+        self._episode_model_loss_sum += self._model_loss
+        self._episode_model_loss_count += 1
+        self._episode_done_loss_sum += self._done_loss
+        self._episode_done_loss_count += 1
+
+    def training_metrics(self) -> Mapping[str, float]:
+        metrics: dict[str, float] = {}
+        if self._episode_model_loss_count > 0:
+            metrics["model_loss"] = (
+                self._episode_model_loss_sum / self._episode_model_loss_count
+            )
+        if self._episode_done_loss_count > 0:
+            metrics["model_done_loss"] = (
+                self._episode_done_loss_sum / self._episode_done_loss_count
+            )
+        return metrics
+
+    def end_episode(self) -> None:
+        self._episode_model_loss_sum = 0.0
+        self._episode_model_loss_count = 0
+        self._episode_done_loss_sum = 0.0
+        self._episode_done_loss_count = 0

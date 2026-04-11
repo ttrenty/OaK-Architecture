@@ -99,13 +99,19 @@ class TensorViewPlan:
     input_channels: int = 1
     latent_dim: int | None = None
     description: str = ""
+    selector_names: tuple[str, ...] = ()
+    selector_indices: tuple[int, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def resolved_latent_dim(self) -> int:
+        # Identity encoders are width-preserving: downstream state_dim must
+        # match the actual tensor width emitted at runtime, not an LLM hint.
+        if self.encoder_type == "identity":
+            return self.input_dim or self.latent_dim or 1
+        if self.encoder_type == "cnn":
+            return self.latent_dim or 128
         if self.latent_dim is not None:
             return self.latent_dim
-        if self.encoder_type == "cnn":
-            return 128
         return self.input_dim or 1
 
 
@@ -270,6 +276,8 @@ class PerceptionPlan:
                 "input_channels": view.input_channels,
                 "latent_dim": view.latent_dim,
                 "description": view.description,
+                "selector_names": list(view.selector_names),
+                "selector_indices": list(view.selector_indices),
             }
             for view in self.tensor_views
         ]
@@ -294,14 +302,32 @@ class ExampleAgentSpec:
 
 @dataclass(slots=True, frozen=True)
 class StateTensorAdapter:
-    """Extract one tensor view from the structured subjective state."""
+    """Extract one or more tensor views from the structured subjective state.
+
+    When ``view_names`` is provided, all listed views are concatenated along
+    the last dimension.  Otherwise a single ``view_name`` is extracted (the
+    original behaviour).
+    """
 
     view_name: str | None = None
+    view_names: tuple[str, ...] | None = None
 
     def tensor(self, state: ExampleSubjectiveState) -> torch.Tensor:
+        if self.view_names is not None:
+            # For real states every view exists; for synthetic planning
+            # states the concatenated tensor lives under a single key.
+            if all(n in state.tensor_views for n in self.view_names):
+                return torch.cat(
+                    [state.tensor_view(n) for n in self.view_names], dim=-1
+                )
+            return state.tensor_view()
         return state.tensor_view(self.view_name)
 
     def state_dim(self, plan: PerceptionPlan) -> int:
+        if self.view_names is not None:
+            return sum(
+                plan.view(n).resolved_latent_dim() for n in self.view_names
+            )
         return plan.view(self.view_name).resolved_latent_dim()
 
 

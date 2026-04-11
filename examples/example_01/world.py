@@ -49,5 +49,12 @@ class GymWorld(World[GymObsT, GymActionT, dict[str, Any]], Generic[GymObsT, GymA
             info=info,
         )
 
+    def render_frame(self) -> Any | None:
+        """Return the current rendered frame when the env was created with rendering."""
+        try:
+            return self.env.render()
+        except Exception:
+            return None
+
     def close(self) -> None:
         self.env.close()

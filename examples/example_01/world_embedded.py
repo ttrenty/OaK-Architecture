@@ -27,6 +27,53 @@ GymObsT = TypeVar("GymObsT")
 GymActionT = TypeVar("GymActionT")
 
 
+ACROBOT_WORLD_DESCRIPTION = WorldDescription(
+    observation_channels=(
+        ObservationChannelDescription(
+            channel_id="main",
+            kind="raw_values",
+            shape=(6,),
+            dtype="float64",
+            description="Acrobot state vector from Gymnasium.",
+            value_names=(
+                "cos_theta1",
+                "sin_theta1",
+                "cos_theta2",
+                "sin_theta2",
+                "angular_velocity_1",
+                "angular_velocity_2",
+            ),
+            encoder_hint="identity",
+        ),
+    ),
+    action=ActionDescription(
+        action_type="discrete",
+        action_n=3,
+        labels=("torque_negative", "torque_zero", "torque_positive"),
+        description="Apply torque to the joint between the two links.",
+    ),
+    default_encoder_type="identity",
+    feature_hints=(
+        SemanticFieldPlan(
+            field_id="link1_state",
+            name="Link 1 state",
+            source_channel="main",
+            description="First link angle (cos/sin) and angular velocity.",
+            selector_names=("cos_theta1", "sin_theta1", "angular_velocity_1"),
+        ),
+        SemanticFieldPlan(
+            field_id="link2_state",
+            name="Link 2 state",
+            source_channel="main",
+            description="Second link angle (cos/sin) and angular velocity.",
+            selector_names=("cos_theta2", "sin_theta2", "angular_velocity_2"),
+        ),
+    ),
+    notes="Bundled Acrobot description with grouped raw-value semantics.",
+    metadata={"env_id": "Acrobot-v1"},
+)
+
+
 CARTPOLE_WORLD_DESCRIPTION = WorldDescription(
     observation_channels=(
         ObservationChannelDescription(
@@ -71,8 +118,16 @@ CARTPOLE_WORLD_DESCRIPTION = WorldDescription(
     metadata={"env_id": "CartPole-v1"},
 )
 
+from .world_pixel import (
+    MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION,
+    PIXEL_CARTPOLE_WORLD_DESCRIPTION,
+)
+
 _KNOWN_WORLD_DESCRIPTIONS: dict[str, WorldDescription] = {
     "CartPole-v1": CARTPOLE_WORLD_DESCRIPTION,
+    "Acrobot-v1": ACROBOT_WORLD_DESCRIPTION,
+    "PixelCartPole-v1": PIXEL_CARTPOLE_WORLD_DESCRIPTION,
+    "MultiModalCartPole-v1": MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION,
 }
 
 
@@ -121,6 +176,13 @@ class DescribedGymWorld(
             truncated=truncated,
             info=info,
         )
+
+    def render_frame(self) -> Any | None:
+        """Return the current rendered frame when the env was created with rendering."""
+        try:
+            return self.env.render()
+        except Exception:
+            return None
 
     def close(self) -> None:
         self.env.close()

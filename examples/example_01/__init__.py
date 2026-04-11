@@ -21,8 +21,16 @@ __all__ = [
     "GymWorld",
     "DescribedGymWorld",
     "CARTPOLE_WORLD_DESCRIPTION",
+    "ACROBOT_WORLD_DESCRIPTION",
+    "PIXEL_CARTPOLE_WORLD_DESCRIPTION",
+    "MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION",
     "WorldDescription",
     "ArcWorld",
+    "EpisodeAnimationRecorder",
+    "EpisodeCaptureSchedule",
+    "TrainingCurveRecorder",
+    "animation_recorder_from_env",
+    "curve_recorder_from_env",
 ]
 
 
@@ -56,18 +64,46 @@ def __getattr__(name: str) -> Any:
     elif name in {
         "DescribedGymWorld",
         "CARTPOLE_WORLD_DESCRIPTION",
+        "ACROBOT_WORLD_DESCRIPTION",
+        "PIXEL_CARTPOLE_WORLD_DESCRIPTION",
+        "MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION",
         "WorldDescription",
+        "EpisodeAnimationRecorder",
+        "EpisodeCaptureSchedule",
+        "TrainingCurveRecorder",
+        "animation_recorder_from_env",
+        "curve_recorder_from_env",
     }:
         from .world_embedded import (
+            ACROBOT_WORLD_DESCRIPTION,
             CARTPOLE_WORLD_DESCRIPTION,
             DescribedGymWorld,
             WorldDescription,
+        )
+        from .world_pixel import (
+            MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION,
+            PIXEL_CARTPOLE_WORLD_DESCRIPTION,
+        )
+        from .training_logging import (
+            EpisodeAnimationRecorder,
+            EpisodeCaptureSchedule,
+            TrainingCurveRecorder,
+            animation_recorder_from_env,
+            curve_recorder_from_env,
         )
 
         exports = {
             "DescribedGymWorld": DescribedGymWorld,
             "CARTPOLE_WORLD_DESCRIPTION": CARTPOLE_WORLD_DESCRIPTION,
+            "ACROBOT_WORLD_DESCRIPTION": ACROBOT_WORLD_DESCRIPTION,
+            "PIXEL_CARTPOLE_WORLD_DESCRIPTION": PIXEL_CARTPOLE_WORLD_DESCRIPTION,
+            "MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION": MULTIMODAL_CARTPOLE_WORLD_DESCRIPTION,
             "WorldDescription": WorldDescription,
+            "EpisodeAnimationRecorder": EpisodeAnimationRecorder,
+            "EpisodeCaptureSchedule": EpisodeCaptureSchedule,
+            "TrainingCurveRecorder": TrainingCurveRecorder,
+            "animation_recorder_from_env": animation_recorder_from_env,
+            "curve_recorder_from_env": curve_recorder_from_env,
         }
     elif name == "ArcWorld":
         from .world_arc import ArcWorld

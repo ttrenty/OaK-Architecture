@@ -15,7 +15,11 @@ from .schema import (
     TensorViewPlan,
     WorldDescription,
 )
-from .startup import build_heuristic_perception_plan, serialize_observation_sample
+from .startup import (
+    build_heuristic_perception_plan,
+    serialize_observation_sample,
+    stabilize_perception_plan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,10 @@ You receive:
 - a structured world description with observation channels and actions
 - optional raw observation samples
 
+For raw_values control problems, always include one tensor view that preserves the
+complete raw state. Grouped slices such as "cart_motion" are optional additions,
+not replacements for the full control state.
+
 Return ONLY valid JSON using this schema:
 {
   "default_tensor_view": "<string>",
@@ -49,7 +57,9 @@ Return ONLY valid JSON using this schema:
       "source_channel": "<string>",
       "encoder_type": "identity" | "mlp" | "cnn",
       "latent_dim": <int or null>,
-      "description": "<string>"
+      "description": "<string>",
+      "selector_names": ["<string>", ...],
+      "selector_indices": [<int>, ...]
     }
   ],
   "feature_groups": [
@@ -184,15 +194,54 @@ def _plan_from_llm_result(
         encoder_type = str(item.get("encoder_type", world_description.encoder_type)).strip()
         if encoder_type not in {"identity", "mlp", "cnn"}:
             continue
+        selector_names_raw = item.get("selector_names", [])
+        selector_indices_raw = item.get("selector_indices", [])
+        selector_names = tuple(
+            str(value)
+            for value in selector_names_raw
+            if isinstance(value, str) and value.strip()
+        )
+        selector_indices = tuple(
+            int(value)
+            for value in selector_indices_raw
+            if isinstance(value, int)
+        )
         latent_dim_raw = item.get("latent_dim")
         latent_dim = int(latent_dim_raw) if isinstance(latent_dim_raw, int) else None
+        input_shape = channel.shape
+        input_dim = channel.input_dim()
+        if channel.kind == "raw_values":
+            channel_names = channel.value_names or tuple(
+                f"value_{index}" for index in range(channel.input_dim() or 0)
+            )
+            valid_selector_names = tuple(
+                name for name in selector_names if name in channel_names
+            )
+            valid_selector_indices = tuple(
+                index
+                for index in selector_indices
+                if 0 <= index < len(channel_names)
+            )
+            if valid_selector_names:
+                selector_names = valid_selector_names
+                selector_indices = ()
+                input_shape = (len(selector_names),)
+                input_dim = len(selector_names)
+            elif valid_selector_indices:
+                selector_names = ()
+                selector_indices = valid_selector_indices
+                input_shape = (len(selector_indices),)
+                input_dim = len(selector_indices)
+            else:
+                selector_names = ()
+                selector_indices = ()
         tensor_views.append(
             TensorViewPlan(
                 view_id=view_id,
                 source_channel=source_channel,
                 encoder_type=cast(Any, encoder_type),
-                input_shape=channel.shape,
-                input_dim=channel.input_dim(),
+                input_shape=input_shape,
+                input_dim=input_dim,
                 input_channels=(
                     int(channel.shape[-1])
                     if channel.shape is not None and len(channel.shape) >= 3
@@ -200,6 +249,8 @@ def _plan_from_llm_result(
                 ),
                 latent_dim=latent_dim,
                 description=str(item.get("description", "")).strip(),
+                selector_names=selector_names,
+                selector_indices=selector_indices,
             )
         )
 
@@ -240,16 +291,14 @@ def _plan_from_llm_result(
     if not tensor_views or not feature_groups:
         raise ValueError("LLM response did not yield any valid tensor views or feature groups")
 
-    chosen_default = default_tensor_view if default_tensor_view else tensor_views[0].view_id
-    if chosen_default not in {view.view_id for view in tensor_views}:
-        chosen_default = tensor_views[0].view_id
-
-    return PerceptionPlan(
-        world_description=world_description,
-        feature_groups=tuple(feature_groups),
-        tensor_views=tuple(tensor_views),
-        default_tensor_view=chosen_default,
-        notes=notes,
-        llm_used=True,
-        metadata={"planner": "llm"},
+    return stabilize_perception_plan(
+        PerceptionPlan(
+            world_description=world_description,
+            feature_groups=tuple(feature_groups),
+            tensor_views=tuple(tensor_views),
+            default_tensor_view=default_tensor_view,
+            notes=notes,
+            llm_used=True,
+            metadata={"planner": "llm"},
+        )
     )

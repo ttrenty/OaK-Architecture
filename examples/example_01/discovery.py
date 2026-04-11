@@ -33,11 +33,16 @@ class DiscoveryManager:
         self._phase: str = "integers"
 
         self._world_description: WorldDescription | None = None
+        self._world_metadata: dict[str, Any] = {"source": "discovery"}
 
     def probe_step(
         self, world: World[Any, Any, Any]
     ) -> tuple[bool, TimeStep[Any, Any] | None]:
         """Try the next action prototype and record observation samples."""
+        env_id = getattr(world, "env_id", None)
+        if isinstance(env_id, str) and env_id:
+            self._world_metadata["env_id"] = env_id
+
         if self._probes_done >= self._max_probes:
             self._phase = "done"
             return False, None
@@ -72,7 +77,7 @@ class DiscoveryManager:
             self.observation_samples[0],
             self.action_description(),
             notes="World description inferred from raw discovery samples.",
-            metadata={"source": "discovery"},
+            metadata=self._world_metadata,
         )
         return self._world_description
 

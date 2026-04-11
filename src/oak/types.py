@@ -257,3 +257,36 @@ class AgentStepResult(Generic[ActionT, SubjectiveStateT]):
     planning_update: PlanningUpdate[ActionT] | None = None
     created_subtasks: Sequence[SubtaskSpec] = field(default_factory=tuple)
     curation_decision: CurationDecision | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class EpisodeStepRecord(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
+    """One executed environment transition collected during training."""
+
+    step_index: int
+    time_step: TimeStep[ObservationT, InfoT]
+    action: ActionT
+    next_time_step: TimeStep[ObservationT, InfoT]
+    active_option_id: OptionId | None = None
+    planning_update: PlanningUpdate[ActionT] | None = None
+    created_subtasks: Sequence[SubtaskSpec] = field(default_factory=tuple)
+
+
+@dataclass(slots=True, frozen=True)
+class EpisodeTrace(Generic[ObservationT, ActionT, SubjectiveStateT, InfoT]):
+    """Rich episode artifact exposed to optional training-side callbacks."""
+
+    episode: int
+    episode_reward: float
+    avg_reward: float
+    step_count: int
+    solved: bool
+    initial_time_step: TimeStep[ObservationT, InfoT]
+    final_time_step: TimeStep[ObservationT, InfoT]
+    steps: Sequence[EpisodeStepRecord[ObservationT, ActionT, SubjectiveStateT, InfoT]] = field(
+        default_factory=tuple
+    )
+    frames: Sequence[object] = field(default_factory=tuple)
+    world: object | None = None
+    agent: object | None = None
+    metadata: OpenPayload = field(default_factory=dict)

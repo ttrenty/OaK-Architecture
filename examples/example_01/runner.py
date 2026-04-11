@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import os
 from typing import Any, Callable, Protocol, cast
 
 import torch
 
 from oak.agent import OaKAgent
 from oak.interfaces import World
+from oak.types import EpisodeTrace
 
 from .discovery import DiscoveryManager
 from .encoders import create_encoder
@@ -25,7 +27,7 @@ from .schema import (
     TensorViewPlan,
     WorldDescription,
 )
-from .startup import build_heuristic_perception_plan
+from .startup import build_heuristic_perception_plan, stabilize_perception_plan
 from .transition_model import DynaTransitionModel
 from .value_function import OptionValueFunction
 
@@ -36,22 +38,131 @@ class WorldWithDescription(World[Any, Any, Any], Protocol):
     description: WorldDescription
 
 
+def _recommended_policy_hyperparameters(
+    perception_plan: PerceptionPlan,
+) -> tuple[float, int, int | None]:
+    """Return environment-aware exploration defaults for Example 01."""
+    env_id = str(perception_plan.world_description.metadata.get("env_id", ""))
+    channel_kinds = {
+        channel.kind for channel in perception_plan.world_description.observation_channels
+    }
+
+    if env_id == "CartPole-v1":
+        return 0.02, 5_000, 80
+    if env_id == "Acrobot-v1":
+        return 0.05, 5_000, 450
+    if channel_kinds == {"raw_values"}:
+        return 0.02, 5_000, 250
+    return 0.01, 20_000, None
+
+
+def _recommended_training_hyperparameters(
+    perception_plan: PerceptionPlan,
+) -> tuple[int, int, int]:
+    """Return environment-aware training defaults for Example 01."""
+    env_id = str(perception_plan.world_description.metadata.get("env_id", ""))
+    channel_kinds = {
+        channel.kind for channel in perception_plan.world_description.observation_channels
+    }
+
+    if env_id == "CartPole-v1":
+        return 1, 25_000, 128
+    if env_id == "Acrobot-v1":
+        return 1, 50_000, 128
+    if channel_kinds == {"raw_values"}:
+        return 1, 30_000, 128
+    return 1, 10_000, 500
+
+
+def _prefers_cpu_training_device(perception_plan: PerceptionPlan) -> bool:
+    """Prefer CPU for tiny raw-state control tasks.
+
+    Small identity-view classic-control runs spend much more time on
+    host<->device transfer and CUDA launch overhead than on actual math.
+    For those cases CPU is materially faster in practice.
+    """
+
+    channel_kinds = {
+        channel.kind for channel in perception_plan.world_description.observation_channels
+    }
+    if channel_kinds != {"raw_values"}:
+        return False
+    if not perception_plan.tensor_views:
+        return False
+    if any(view.encoder_type != "identity" for view in perception_plan.tensor_views):
+        return False
+    default_view = perception_plan.view()
+    return default_view.resolved_latent_dim() <= 16
+
+
+def _resolve_training_device(
+    perception_plan: PerceptionPlan,
+    explicit_device: torch.device | None = None,
+) -> tuple[torch.device, str]:
+    """Resolve the execution device for Example 01 training."""
+
+    if explicit_device is not None:
+        return explicit_device, "explicit"
+
+    env_override = os.environ.get("OAK_EXAMPLE_DEVICE", "").strip()
+    if env_override and env_override.lower() != "auto":
+        requested = torch.device(env_override)
+        if requested.type == "cuda" and not torch.cuda.is_available():
+            return torch.device("cpu"), f"env override {env_override!r} unavailable"
+        return requested, f"env override {env_override!r}"
+
+    if _prefers_cpu_training_device(perception_plan):
+        return torch.device("cpu"), "auto-selected for small raw-value control world"
+
+    if torch.cuda.is_available():
+        return torch.device("cuda"), "auto-selected CUDA"
+    return torch.device("cpu"), "auto-selected CPU"
+
+
 def build_agent(
     config: dict[str, Any] | ExampleAgentSpec,
     *,
     train_encoder: bool = False,
-    planning_budget: int = 5,
-    planning_warmup_steps: int = 500,
-    feature_budget: int = 2,
+    planning_budget: int = 1,
+    planning_warmup_steps: int | None = None,
+    feature_budget: int | None = None,
     device: torch.device | None = None,
 ) -> OaKAgent:
     """Build a fully wired OaK agent from a typed startup spec or legacy config."""
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     spec = _coerce_agent_spec(config)
-    perception_plan = spec.perception_plan
-    state_adapter = StateTensorAdapter(perception_plan.default_tensor_view)
+    perception_plan = stabilize_perception_plan(spec.perception_plan)
+    # If the legacy config explicitly overrode the encoder, restore its default
+    # view after stabilization (stabilize may have switched to identity).
+    explicit_default = perception_plan.metadata.get("explicit_default_tensor_view")
+    if explicit_default and explicit_default != perception_plan.default_tensor_view:
+        view_ids = {v.view_id for v in perception_plan.tensor_views}
+        if explicit_default in view_ids:
+            perception_plan = replace(perception_plan, default_tensor_view=explicit_default)
+    if perception_plan is not spec.perception_plan:
+        spec = replace(spec, perception_plan=perception_plan)
+    device, _ = _resolve_training_device(perception_plan, device)
+
+    channel_kinds = {
+        ch.kind for ch in perception_plan.world_description.observation_channels
+    }
+    (
+        recommended_feature_budget,
+        recommended_planning_warmup_steps,
+        subtask_creation_interval,
+    ) = _recommended_training_hyperparameters(perception_plan)
+    effective_feature_budget = feature_budget or recommended_feature_budget
+    effective_planning_warmup_steps = (
+        planning_warmup_steps
+        if planning_warmup_steps is not None
+        else recommended_planning_warmup_steps
+    )
+
+    if len(channel_kinds) > 1 and len(perception_plan.tensor_views) > 1:
+        state_adapter = StateTensorAdapter(
+            view_names=tuple(v.view_id for v in perception_plan.tensor_views)
+        )
+    else:
+        state_adapter = StateTensorAdapter(perception_plan.default_tensor_view)
 
     encoders = {}
     for view in perception_plan.tensor_views:
@@ -81,14 +192,19 @@ def build_agent(
         perception_plan=perception_plan,
         encoders=encoders,
         train_encoder=train_encoder,
+        subtask_creation_interval=subtask_creation_interval,
     )
 
     transition_model = DynaTransitionModel(
         state_dim=state_dim,
         num_actions=action_n,
-        planning_warmup_steps=planning_warmup_steps,
+        planning_warmup_steps=effective_planning_warmup_steps,
         device=device,
         state_adapter=state_adapter,
+    )
+
+    epsilon_end, epsilon_decay_steps, epsilon_decay_episodes = (
+        _recommended_policy_hyperparameters(perception_plan)
     )
 
     reactive_policy = OptionCriticPolicy(
@@ -97,6 +213,9 @@ def build_agent(
         state_dim=state_dim,
         device=device,
         state_adapter=state_adapter,
+        epsilon_end=epsilon_end,
+        epsilon_decay_steps=epsilon_decay_steps,
+        epsilon_decay_episodes=epsilon_decay_episodes,
     )
 
     return OaKAgent(
@@ -105,7 +224,7 @@ def build_agent(
         value_function=value_function,
         reactive_policy=reactive_policy,
         planning_budget=planning_budget,
-        feature_budget=feature_budget,
+        feature_budget=effective_feature_budget,
         option_stop_threshold=0.5,
     )
 
@@ -177,22 +296,18 @@ def run_training(
     solved_threshold: float | None = None,
     ollama_model: str = "qwen3.5:9b",
     train_encoder: bool = False,
-    planning_budget: int = 5,
-    planning_warmup_steps: int = 500,
-    feature_budget: int = 2,
+    planning_budget: int = 1,
+    planning_warmup_steps: int | None = None,
+    feature_budget: int | None = None,
     episode_logger: Callable[[int, float, float, OaKAgent], None] | None = None,
+    episode_trace_logger: Callable[[EpisodeTrace[Any, Any, Any, Any]], None] | None = None,
+    trace_selector: Callable[[int, int], bool] | None = None,
+    capture_rendered_frames: bool = False,
     verbose: bool = True,
     device: torch.device | None = None,
 ) -> list[float]:
     """Run the full startup-spec, build, train pipeline on the given world."""
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
     embedded = hasattr(world, "description")
-
-    if verbose:
-        print(f"  Device: {device}")
-        print(f"  Mode:   {'embedded' if embedded else 'discovery'}\n")
 
     if embedded:
         spec = _spec_from_description(
@@ -206,6 +321,14 @@ def run_training(
             ollama_model=ollama_model,
             verbose=verbose,
         )
+
+    device, device_reason = _resolve_training_device(spec.perception_plan, device)
+
+    if verbose:
+        print(f"  Device: {device}")
+        if device_reason != "explicit":
+            print(f"  Device reason: {device_reason}")
+        print(f"  Mode:   {'embedded' if embedded else 'discovery'}\n")
 
     if verbose:
         print("\n" + "=" * 60)
@@ -239,6 +362,9 @@ def run_training(
         average_window=average_window,
         solved_threshold=solved_threshold,
         episode_logger=episode_logger,
+        episode_trace_logger=episode_trace_logger,
+        trace_selector=trace_selector,
+        capture_rendered_frames=capture_rendered_frames,
     )
 
     world.close()
@@ -359,6 +485,8 @@ def _perception_plan_from_config(
             input_channels=int(view.get("input_channels", 1)),
             latent_dim=int(view["latent_dim"]) if view.get("latent_dim") is not None else None,
             description=str(view.get("description", "")),
+            selector_names=tuple(str(name) for name in view.get("selector_names", [])),
+            selector_indices=tuple(int(index) for index in view.get("selector_indices", [])),
         )
         for view in cast(list[dict[str, Any]], config["tensor_views"])
     )
@@ -398,19 +526,23 @@ def _perception_plan_from_legacy_config(
     latent_override = (
         int(config["latent_dim"]) if config.get("latent_dim") is not None else default_view.latent_dim
     )
+    if encoder_override == default_view.encoder_type and latent_override == default_view.latent_dim:
+        return plan
+
     overridden_views = [replace(default_view, encoder_type=encoder_override, latent_dim=latent_override)]
     overridden_views.extend(
         view for view in plan.tensor_views if view.view_id != default_view.view_id
     )
-    return PerceptionPlan(
+    overridden_plan = PerceptionPlan(
         world_description=description,
         feature_groups=plan.feature_groups,
         tensor_views=tuple(overridden_views),
         default_tensor_view=plan.default_tensor_view,
         notes=plan.notes,
         llm_used=plan.llm_used,
-        metadata=plan.metadata,
+        metadata={**plan.metadata, "explicit_default_tensor_view": plan.default_tensor_view},
     )
+    return overridden_plan
 
 
 def _feature_hints_from_legacy(
@@ -511,10 +643,12 @@ def _startup_plan(
         model=ollama_model,
     )
     if llm_plan is not None:
-        return llm_plan
-    return build_heuristic_perception_plan(
-        description,
-        notes="Heuristic startup perception plan (LLM unavailable).",
-        llm_used=False,
-        metadata={"planner": "heuristic"},
+        return stabilize_perception_plan(llm_plan)
+    return stabilize_perception_plan(
+        build_heuristic_perception_plan(
+            description,
+            notes="Heuristic startup perception plan (LLM unavailable).",
+            llm_used=False,
+            metadata={"planner": "heuristic"},
+        )
     )
